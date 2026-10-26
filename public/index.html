@@ -97,6 +97,8 @@
   .drawer-foot input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
 
   dialog { border: none; border-radius: 10px; padding: 0; width: min(640px, 94vw); background: var(--card); color: var(--text); box-shadow: 0 8px 40px rgba(0,0,0,.3); }
+  #ask { width: min(420px, 94vw); }
+  #ask p { margin: 0; white-space: pre-wrap; }
   dialog::backdrop { background: rgba(9,30,66,.5); }
   .modal { padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .modal h3 { margin: 0; font-size: 16px; }
@@ -184,6 +186,16 @@
   </form>
 </dialog>
 
+<dialog id="ask">
+  <form class="modal" method="dialog">
+    <p id="ask-msg"></p>
+    <div class="actions"><span></span><span>
+      <button value="cancel" id="ask-cancel">Cancel</button>
+      <button value="ok" class="primary" id="ask-ok">OK</button>
+    </span></div>
+  </form>
+</dialog>
+
 <dialog id="project-dialog">
   <form class="modal" method="dialog" id="project-form">
     <h3>Project settings</h3>
@@ -248,6 +260,22 @@ const ago = (iso) => {
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return new Date(iso).toLocaleDateString();
 };
+
+// In-page replacements for confirm() and alert(). Embedded browsers (e.g. the Claude desktop app's browser
+// pane) can suppress native dialogs, which made confirm() return false instantly and Delete do nothing (#15).
+function ask(message, { ok = 'OK', danger = false, cancel = true } = {}) {
+  const dlg = $('#ask');
+  $('#ask-msg').textContent = message;
+  $('#ask-ok').textContent = ok;
+  $('#ask-ok').className = danger ? 'danger' : 'primary';
+  $('#ask-cancel').hidden = !cancel;
+  dlg.returnValue = '';
+  dlg.showModal();
+  $('#ask-ok').focus();
+  return new Promise((resolve) => dlg.addEventListener('close', () => resolve(dlg.returnValue === 'ok'), { once: true }));
+}
+const uiConfirm = (message, opts) => ask(message, opts);
+const uiAlert = (message) => ask(message, { cancel: false });
 
 async function api(method, url, body) {
   const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
@@ -508,13 +536,13 @@ $('#decision-panel').addEventListener('click', async (e) => {
   if (e.target.closest('[data-reopen]')) {
     const t = state.tasks.find((x) => x.id === editingId);
     const held = t.assignee ? ` ${t.assignee} has it claimed and may already be acting on it.` : '';
-    if (!confirm(`Reopen decision #${t.id}? Its answer "${t.answer}" will no longer apply.${held}`)) return;
+    if (!(await uiConfirm(`Reopen decision #${t.id}? Its answer "${t.answer}" will no longer apply.${held}`, { ok: 'Reopen' }))) return;
     try {
       await api('POST', `/api/tasks/${t.id}/reopen`, { reason: $('#form').comment.value.trim() || undefined });
       $('#dialog').close();
       await refresh(true);
     } catch (err) {
-      alert(err.message);
+      uiAlert(err.message);
     }
     return;
   }
@@ -524,13 +552,13 @@ $('#decision-panel').addEventListener('click', async (e) => {
   const comment = $('#form').comment.value.trim();
   const choice = b.dataset.answer === 'custom' ? '' : t.options[Number(b.dataset.answer)];
   const answer = [choice, comment].filter(Boolean).join(' — ');
-  if (!answer) return alert('Type your answer in the comment box first.');
+  if (!answer) return uiAlert('Type your answer in the comment box first.');
   try {
     await api('POST', `/api/tasks/${t.id}/decide`, { answer, column: $('#decision-route').value });
     $('#dialog').close();
     await refresh(true);
   } catch (err) {
-    alert(err.message);
+    uiAlert(err.message);
   }
 });
 
@@ -559,10 +587,15 @@ $('#form').addEventListener('submit', async (e) => {
 });
 $('#cancel').addEventListener('click', () => $('#dialog').close());
 $('#delete').addEventListener('click', async () => {
-  if (!confirm('Delete this task?')) return;
-  await api('DELETE', `/api/tasks/${editingId}`);
-  $('#dialog').close();
-  await refresh();
+  const t = state.tasks.find((x) => x.id === editingId);
+  if (!(await uiConfirm(`Delete #${t.id} "${t.title}"? This cannot be undone.`, { ok: 'Delete', danger: true }))) return;
+  try {
+    await api('DELETE', `/api/tasks/${t.id}`);
+    $('#dialog').close();
+    await refresh(true);
+  } catch (err) {
+    uiAlert(err.message);
+  }
 });
 
 // ---------- project menu ----------
@@ -587,7 +620,7 @@ $('#new-project').addEventListener('keydown', async (e) => {
     await refresh(true);
     openProject(p.id); // straight into linking folders
   } catch (err) {
-    alert(err.message);
+    uiAlert(err.message);
   }
 });
 
@@ -625,7 +658,7 @@ function renderPaths() {
 function addPath(p) {
   p = p.trim().replace(/\/+$/, '');
   if (!p) return;
-  if (!p.startsWith('/')) return alert('Folder must be an absolute path');
+  if (!p.startsWith('/')) return uiAlert('Folder must be an absolute path');
   if (!editingProject.paths.includes(p)) editingProject.paths.push(p);
   $('#project-form').newPath.value = '';
   renderPaths();
@@ -653,21 +686,21 @@ $('#project-form').addEventListener('submit', async (e) => {
     $('#project-dialog').close();
     await refresh(true);
   } catch (err) {
-    alert(err.message);
+    uiAlert(err.message);
   }
 });
 $('#project-cancel').addEventListener('click', () => $('#project-dialog').close());
 $('#project-delete').addEventListener('click', async () => {
   const p = state.projects.find((x) => x.id === editingProject.id);
   const n = Object.values(p.counts).reduce((a, b) => a + b, 0);
-  if (!confirm(`Delete project "${p.name}"${n ? ` and its ${n} task${n > 1 ? 's' : ''}` : ''}? This cannot be undone.`)) return;
+  if (!(await uiConfirm(`Delete project "${p.name}"${n ? ` and its ${n} task${n > 1 ? 's' : ''}` : ''}? This cannot be undone.`, { ok: 'Delete project', danger: true }))) return;
   try {
     await api('DELETE', `/api/projects/${p.id}`);
     $('#project-dialog').close();
     if (selection() === p.id) selectProject('all');
     else await refresh(true);
   } catch (err) {
-    alert(err.message);
+    uiAlert(err.message);
   }
 });
 
