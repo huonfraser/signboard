@@ -1,0 +1,17 @@
+{
+  "name": "kanban-vibes",
+  "version": "1.0.0",
+  "description": "Lightweight local kanban board with an MCP server for Claude Code",
+  "scripts": {
+    "start": "node server.js",
+    "mcp": "node mcp.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  }
+}

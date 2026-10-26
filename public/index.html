@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kanban Vibes</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --col: #ebecf0; --card: #fff; --text: #172b4d; --muted: #6b778c;
+    --border: #dfe1e6; --accent: #d97757; --shadow: 0 1px 2px rgba(9,30,66,.2);
+    --low: #8993a4; --medium: #2684ff; --high: #ff991f; --urgent: #de350b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1d2125; --col: #282e33; --card: #22272b; --text: #dee4ea; --muted: #9fadbc;
+      --border: #3a434b; --shadow: 0 1px 2px rgba(0,0,0,.5);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 18px; margin: 0; }
+  header .spacer { flex: 1; }
+  header input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); width: 220px; }
+  .status { font-size: 12px; color: var(--muted); }
+  .board { display: flex; gap: 12px; padding: 16px; overflow-x: auto; align-items: flex-start; min-height: calc(100vh - 58px); }
+  .column { background: var(--col); border-radius: 8px; width: 280px; min-width: 280px; display: flex; flex-direction: column; max-height: calc(100vh - 90px); }
+  .column h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0; padding: 10px 12px; display: flex; justify-content: space-between; }
+  .cards { padding: 0 8px; overflow-y: auto; min-height: 40px; flex: 1; }
+  .column.drop .cards { outline: 2px dashed var(--accent); outline-offset: -4px; border-radius: 6px; }
+  .card { background: var(--card); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; box-shadow: var(--shadow); cursor: pointer; border-left: 3px solid var(--medium); }
+  .card.dragging { opacity: .4; }
+  .card.drop-before { box-shadow: 0 -3px 0 var(--accent), var(--shadow); }
+  .card .title { font-weight: 500; word-break: break-word; }
+  .card .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; font-size: 11px; color: var(--muted); align-items: center; }
+  .pill { padding: 1px 6px; border-radius: 10px; background: var(--col); }
+  .pill.agent { background: var(--accent); color: #fff; }
+  .p-low { border-left-color: var(--low); } .p-medium { border-left-color: var(--medium); }
+  .p-high { border-left-color: var(--high); } .p-urgent { border-left-color: var(--urgent); }
+  .add { padding: 8px; }
+  .add input { width: 100%; padding: 7px 9px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text); }
+  .add input:focus { background: var(--card); border-color: var(--border); outline: none; }
+  dialog { border: none; border-radius: 10px; padding: 0; width: min(640px, 94vw); background: var(--card); color: var(--text); box-shadow: 0 8px 40px rgba(0,0,0,.3); }
+  dialog::backdrop { background: rgba(9,30,66,.5); }
+  .modal { padding: 20px; display: grid; gap: 12px; }
+  .modal input, .modal textarea, .modal select { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  .modal textarea { min-height: 110px; resize: vertical; }
+  .modal .title-input { font-size: 18px; font-weight: 600; }
+  .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .row label, .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; display: grid; gap: 4px; }
+  .activity { max-height: 220px; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 8px; }
+  .entry { font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .entry .who { font-weight: 600; } .entry .when { color: var(--muted); font-size: 11px; margin-left: 6px; }
+  .entry.event { color: var(--muted); font-size: 12px; }
+  .entry .body { white-space: pre-wrap; margin-top: 2px; }
+  .actions { display: flex; gap: 8px; justify-content: space-between; }
+  button { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--col); color: var(--text); cursor: pointer; font: inherit; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--urgent); }
+  @media (max-width: 600px) { .row { grid-template-columns: 1fr 1fr; } header input { width: 130px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kanban Vibes</h1>
+  <span class="status" id="status"></span>
+  <span class="spacer"></span>
+  <input id="filter" placeholder="Filter tasks…" />
+</header>
+<main class="board" id="board"></main>
+
+<dialog id="dialog">
+  <form class="modal" method="dialog" id="form">
+    <input class="title-input" name="title" required />
+    <div class="row">
+      <label>Column<select name="column"></select></label>
+      <label>Priority<select name="priority"></select></label>
+      <label>Assignee<input name="assignee" placeholder="unassigned" /></label>
+      <label>Tags<input name="tags" placeholder="comma,separated" /></label>
+    </div>
+    <div class="field"><label>Description<textarea name="description" placeholder="Details, acceptance criteria, context for Claude…"></textarea></label></div>
+    <div class="activity" id="activity"></div>
+    <div class="field"><label>Comment<textarea name="comment" style="min-height:50px" placeholder="Add a comment…"></textarea></label></div>
+    <div class="actions">
+      <button type="button" class="danger" id="delete">Delete</button>
+      <span>
+        <button type="button" id="cancel">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </span>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const LABELS = { backlog: 'Backlog', todo: 'To do', in_progress: 'In progress', review: 'Review', done: 'Done' };
+let state = { columns: [], priorities: [], tasks: [] };
+let dragId = null;
+let editingId = null;
+
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ago = (iso) => {
+  const s = (Date.now() - new Date(iso)) / 1000;
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return new Date(iso).toLocaleDateString();
+};
+
+async function api(method, url, body) {
+  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+let needsRender = false;
+
+async function refresh() {
+  try {
+    const next = await api('GET', '/api/board');
+    if (JSON.stringify(next) !== JSON.stringify(state)) needsRender = true;
+    state = next;
+    $('#status').textContent = '';
+    // Don't clobber an in-progress drag or a half-typed quick-add; render on a later tick instead.
+    const typing = document.activeElement?.matches('.add input') && document.activeElement.value;
+    if (needsRender && dragId === null && !typing) {
+      needsRender = false;
+      render();
+    }
+  } catch {
+    $('#status').textContent = 'offline — retrying';
+  }
+}
+
+function render() {
+  const q = $('#filter').value.toLowerCase();
+  const board = $('#board');
+  board.innerHTML = '';
+  for (const col of state.columns) {
+    const tasks = state.tasks
+      .filter((t) => t.column === col)
+      .filter((t) => !q || `${t.title} ${t.description} ${t.assignee ?? ''} ${t.tags.join(' ')}`.toLowerCase().includes(q));
+    const el = document.createElement('section');
+    el.className = 'column';
+    el.dataset.column = col;
+    el.innerHTML = `<h2><span>${LABELS[col] ?? col}</span><span>${tasks.length}</span></h2><div class="cards"></div>
+      <div class="add"><input placeholder="+ Add task" /></div>`;
+    const cards = $('.cards', el);
+    for (const t of tasks) cards.appendChild(cardEl(t));
+    $('.add input', el).addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter' || !e.target.value.trim()) return;
+      await api('POST', '/api/tasks', { title: e.target.value.trim(), column: col });
+      e.target.value = '';
+      await refresh();
+      $(`[data-column="${col}"] .add input`).focus();
+    });
+    wireDrop(el);
+    board.appendChild(el);
+  }
+}
+
+function cardEl(t) {
+  const el = document.createElement('article');
+  el.className = `card p-${t.priority}`;
+  el.draggable = true;
+  el.dataset.id = t.id;
+  const isAgent = t.assignee && /claude|agent/i.test(t.assignee);
+  el.innerHTML = `<div class="title">${esc(t.title)}</div>
+    <div class="meta">
+      <span>#${t.id}</span>
+      ${t.priority !== 'medium' ? `<span class="pill">${t.priority}</span>` : ''}
+      ${t.assignee ? `<span class="pill ${isAgent ? 'agent' : ''}">${esc(t.assignee)}</span>` : ''}
+      ${t.tags.map((g) => `<span class="pill">${esc(g)}</span>`).join('')}
+      ${t.activity.some((a) => a.kind === 'comment') ? `<span>💬 ${t.activity.filter((a) => a.kind === 'comment').length}</span>` : ''}
+      <span style="margin-left:auto">${ago(t.updatedAt)}</span>
+    </div>`;
+  el.addEventListener('click', () => openTask(t.id));
+  el.addEventListener('dragstart', (e) => { dragId = t.id; el.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+  el.addEventListener('dragend', () => { dragId = null; render(); });
+  return el;
+}
+
+function wireDrop(colEl) {
+  const clear = () => document.querySelectorAll('.drop, .drop-before').forEach((n) => n.classList.remove('drop', 'drop-before'));
+  colEl.addEventListener('dragover', (e) => {
+    if (dragId === null) return;
+    e.preventDefault();
+    clear();
+    colEl.classList.add('drop');
+    const before = e.target.closest('.card');
+    if (before && Number(before.dataset.id) !== dragId) before.classList.add('drop-before');
+  });
+  colEl.addEventListener('dragleave', (e) => { if (!colEl.contains(e.relatedTarget)) clear(); });
+  colEl.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const before = e.target.closest('.card');
+    clear();
+    const id = dragId;
+    dragId = null;
+    if (id === null) return;
+    await moveTask(id, colEl.dataset.column, before ? Number(before.dataset.id) : null);
+  });
+}
+
+// Insert the dragged task before `beforeId` (or at the end) and renumber the column.
+async function moveTask(id, column, beforeId) {
+  const ids = state.tasks.filter((t) => t.column === column && t.id !== id).map((t) => t.id);
+  const idx = beforeId === null ? ids.length : ids.indexOf(beforeId);
+  ids.splice(idx < 0 ? ids.length : idx, 0, id);
+  const updates = [];
+  ids.forEach((tid, order) => {
+    const t = state.tasks.find((x) => x.id === tid);
+    if (tid === id) updates.push(api('PATCH', `/api/tasks/${tid}`, { column, order }));
+    else if (t.order !== order) updates.push(api('PATCH', `/api/tasks/${tid}`, { order }));
+  });
+  await Promise.all(updates);
+  await refresh();
+}
+
+function openTask(id) {
+  const t = state.tasks.find((x) => x.id === id);
+  if (!t) return;
+  editingId = id;
+  const f = $('#form');
+  f.column.innerHTML = state.columns.map((c) => `<option value="${c}">${LABELS[c] ?? c}</option>`).join('');
+  f.priority.innerHTML = state.priorities.map((p) => `<option>${p}</option>`).join('');
+  f.title.value = t.title;
+  f.column.value = t.column;
+  f.priority.value = t.priority;
+  f.assignee.value = t.assignee ?? '';
+  f.tags.value = t.tags.join(', ');
+  f.description.value = t.description;
+  f.comment.value = '';
+  $('#activity').innerHTML = [...t.activity].reverse().map((a) => `<div class="entry ${a.kind}">
+      <span class="who">${esc(a.author)}</span><span class="when">${ago(a.at)}</span>
+      <div class="body">${esc(a.text)}</div></div>`).join('');
+  $('#dialog').showModal();
+}
+
+$('#form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const id = editingId;
+  await api('PATCH', `/api/tasks/${id}`, {
+    title: f.title.value,
+    column: f.column.value,
+    priority: f.priority.value,
+    assignee: f.assignee.value.trim() || null,
+    tags: f.tags.value.split(',').map((s) => s.trim()).filter(Boolean),
+    description: f.description.value,
+  });
+  if (f.comment.value.trim()) await api('POST', `/api/tasks/${id}/comments`, { text: f.comment.value.trim() });
+  $('#dialog').close();
+  await refresh();
+});
+$('#cancel').addEventListener('click', () => $('#dialog').close());
+$('#delete').addEventListener('click', async () => {
+  if (!confirm('Delete this task?')) return;
+  await api('DELETE', `/api/tasks/${editingId}`);
+  $('#dialog').close();
+  await refresh();
+});
+$('#filter').addEventListener('input', render);
+
+refresh();
+setInterval(refresh, 2000); // pick up changes Claude makes via the MCP server
+</script>
+</body>
+</html>
