@@ -342,6 +342,28 @@ function commentTask(id, { text, author }, actor) {
   return task;
 }
 
+// Record a commit that implements a task. Commits often land after submitting for review, so Claude may link
+// them to a task it claimed while that task is in progress or in review.
+function linkCommit(id, { sha, message, author }, actor) {
+  const task = findTask(id);
+  sha = String(sha ?? '').trim().toLowerCase();
+  if (!/^[0-9a-f]{7,40}$/.test(sha)) throw new HttpError(400, 'sha must be a 7–40 character hex commit hash');
+  if (actor) {
+    guardTask(actor, task);
+    if (!['in_progress', 'review'].includes(task.column)) deny(`Commits are linked while a task is in progress or in review; #${task.id} is in ${task.column}.`);
+    if (task.assignee !== actor) deny(`#${task.id} is not claimed by ${actor}.`);
+  }
+  task.commits ??= [];
+  // Short and full hashes of the same commit count as one.
+  if (task.commits.some((c) => c.sha.startsWith(sha) || sha.startsWith(c.sha))) return task;
+  const subject = String(message ?? '').split('\n')[0].trim();
+  task.commits.push({ sha, message: subject, author: actor || author || 'user', at: now() });
+  addActivity(task, actor || author, `Linked commit ${sha.slice(0, 7)}${subject ? `: ${subject}` : ''}`, 'event');
+  task.updatedAt = now();
+  save();
+  return task;
+}
+
 // Atomically take a task and start it: a specific one (taskId) or the highest-priority, oldest unassigned
 // one in a project's column. Claude may claim from todo, or from bugs when "Autofix bugs" is on.
 function claimNext({ assignee, projectId, column = 'todo', tag, taskId }, actor) {
@@ -601,6 +623,7 @@ async function handle(req, res) {
     if (id && parts[3] === 'comments' && method === 'POST') {
       return send(res, 201, commentTask(id, await readBody(req), actor));
     }
+    if (id && parts[3] === 'commits' && method === 'POST') return send(res, 201, linkCommit(id, await readBody(req), actor));
     if (id && parts[3] === 'decide' && method === 'POST') return send(res, 200, decideTask(id, await readBody(req), actor));
     if (id && !parts[3]) {
       if (method === 'GET') return send(res, 200, findTask(id));

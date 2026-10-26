@@ -260,6 +260,21 @@ tool(
   async ({ id, text: body }) => text(`Commented on ${line(await api('POST', `/api/tasks/${id}/comments`, { text: body }))}`),
 );
 
+tool(
+  'link_commit',
+  'Record a commit that implements a task you claimed, once the change is committed. Works while the task is in ' +
+    'progress or in review. Linking the same commit twice is harmless.',
+  {
+    id: z.number().int(),
+    sha: z.string().describe('Commit hash, short or full (e.g. from `git log -1 --format=%H`)'),
+    message: z.string().optional().describe('Commit subject line'),
+  },
+  async ({ id, sha, message }) => {
+    const task = await api('POST', `/api/tasks/${id}/commits`, { sha, message });
+    return text(`Linked ${sha.slice(0, 7)} to ${line(task)} (${task.commits.length} commit${task.commits.length === 1 ? '' : 's'})`);
+  },
+);
+
 // ---------- workflow 2: bugs ----------
 
 tool(

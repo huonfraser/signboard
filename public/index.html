@@ -103,6 +103,8 @@
   .modal .title-input { font-size: 18px; font-weight: 600; }
   .row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
   .row label, .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; display: grid; gap: 4px; }
+  .commits { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+  .commits code { font: 12px ui-monospace, Menlo, monospace; padding: 1px 6px; border-radius: 4px; background: var(--bg); }
   .activity { max-height: 220px; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 8px; }
   .entry { font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--border); }
   .entry .who { font-weight: 600; } .entry .when { color: var(--muted); font-size: 11px; margin-left: 6px; }
@@ -162,6 +164,7 @@
     <div class="related" id="related" hidden></div>
     <div class="field"><label>Description<textarea name="description" placeholder="Details, acceptance criteria, context for Claude…"></textarea></label></div>
     <div class="decision-panel" id="decision-panel" hidden></div>
+    <div class="field" id="commits" hidden></div>
     <div class="activity" id="activity"></div>
     <div class="field"><label>Comment<textarea name="comment" style="min-height:50px" placeholder="Add a comment…"></textarea></label></div>
     <div class="actions">
@@ -379,6 +382,7 @@ function cardEl(t, showProject) {
       ${t.priority !== 'medium' ? `<span class="pill">${t.priority}</span>` : ''}
       ${t.assignee ? `<span class="pill ${isAgent ? 'agent' : ''}" title="${t.column === 'in_progress' ? 'Locked: claimed by ' + esc(t.assignee) : ''}">${t.column === 'in_progress' ? '🔒 ' : ''}${esc(t.assignee)}</span>` : ''}
       ${t.tags.filter((g) => g !== t.kind).map((g) => `<span class="pill">${esc(g)}</span>`).join('')}
+      ${t.commits?.length ? `<span title="Linked commits">⎇ ${t.commits.length}</span>` : ''}
       ${t.activity.some((a) => a.kind === 'comment') ? `<span>💬 ${t.activity.filter((a) => a.kind === 'comment').length}</span>` : ''}
       <span style="margin-left:auto">${ago(t.updatedAt)}</span>
     </div>`;
@@ -454,6 +458,10 @@ function openTask(id) {
   f.comment.value = '';
   renderRelated(t);
   renderDecision(t);
+  const commits = t.commits ?? [];
+  $('#commits').hidden = !commits.length;
+  $('#commits').innerHTML = `<label>Commits</label><ul class="commits">${commits.map((c) =>
+    `<li><code title="${esc(c.sha)}">${esc(c.sha.slice(0, 7))}</code> ${esc(c.message)}</li>`).join('')}</ul>`;
   $('#activity').innerHTML = [...t.activity].reverse().map((a) => `<div class="entry ${a.kind}">
       <span class="who">${esc(a.author)}</span><span class="when">${ago(a.at)}</span>
       <div class="body">${esc(a.text)}</div></div>`).join('');
