@@ -666,8 +666,25 @@ async function readBody(req) {
 }
 
 const STATIC = { '/': 'index.html', '/index.html': 'index.html' };
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+// The board has no login, so only this machine may use it, and not through a web page from another site.
+// Binding to 127.0.0.1 keeps the network out; these checks keep other sites in the user's browser out:
+//   - Host must be a loopback name, which defeats DNS rebinding (evil.example resolving to 127.0.0.1).
+//   - A browser Origin must be this server's own, which stops cross-site requests.
+//   - Writes must be JSON. A cross-site JSON request needs a CORS preflight, which this server never grants.
+// The UI and the MCP server meet all three; requests without an Origin (curl, the MCP server) are allowed.
+function checkCaller(req) {
+  const host = req.headers.host || '';
+  if (!LOOPBACK_HOSTS.has(host.replace(/:\d+$/, ''))) throw new HttpError(403, 'Signboard only answers to localhost');
+  const origin = req.headers.origin;
+  if (origin && origin !== `http://${host}`) throw new HttpError(403, 'Cross-origin requests are not allowed');
+  const json = (req.headers['content-type'] || '').startsWith('application/json');
+  if (!['GET', 'HEAD'].includes(req.method) && !json) throw new HttpError(415, 'Requests that change the board must be application/json');
+}
 
 async function handle(req, res) {
+  checkCaller(req);
   const url = new URL(req.url, `http://${req.headers.host}`);
   const parts = url.pathname.split('/').filter(Boolean); // e.g. ['api','tasks','3','comments']
   const method = req.method;
