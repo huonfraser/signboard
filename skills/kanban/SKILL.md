@@ -45,14 +45,16 @@ When the user asks to see or check the board, `list_tasks` per column (or one co
 3. **Work.** `add_comment` at meaningful points: approach chosen, a non-obvious finding, partial progress on a long task. Keep comments short; no running commentary.
    - **Too big?** `create_subtask(parent_id, …)` puts a piece of *this* task into To do.
    - **Other ideas, follow-ups or refactors** you notice: don't create tasks for them. List them under "Follow-ups" in your review summary, so the human can add them to Backlog if they want them.
-4. **Submit.** Verify first (run the tests, typecheck, exercise the change), then `submit_for_review(id, summary)`. The summary covers:
+4. **Commit.** Once the change is verified (run the tests, typecheck, exercise the change), commit it. **Each task or item gets its own commit.** Stage only that task's files, never batch several tasks into one commit, and put the task number in the message (e.g. `Add sort options (#5)`). A bug you fix or a decision you apply inside the task is committed separately too, under its own number. Then `link_commit(id, sha, message)` so the board shows the commit on the task.
+5. **Submit.** `submit_for_review(id, summary)`. The summary covers:
    - **What changed:** files and areas.
    - **How it was verified:** the commands you ran and their results. Say plainly if something is untested.
+   - **Commits:** the short hash of each commit.
    - **Bugs:** raised or fixed, by number.
    - **Decisions:** raised or applied, by number.
    - **Follow-ups:** suggestions for Backlog.
-5. **Can't finish it** as described (wrong premise, out of your reach)? `release_task(id, reason)` puts it back in To do, unlocked. If a human needs to choose how to proceed, raise a decision instead and keep the task.
-6. **Next.** If the user asked you to "work the board", go back to step 1. When To do is empty:
+6. **Can't finish it** as described (wrong premise, out of your reach)? `release_task(id, reason)` puts it back in To do, unlocked. If a human needs to choose how to proceed, raise a decision instead and keep the task.
+7. **Next.** If the user asked you to "work the board", go back to step 1. When To do is empty:
    - If the user asked you to keep polling, `wait_for_task`. It waits for new work and claims it; call it again on timeout.
    - Otherwise stop. If you did nothing this session, the answer is simply **"No work available."** Don't list or suggest Backlog tasks. If you did work, summarise what you did and what's waiting on the user (open decisions, untriaged bugs).
 
