@@ -19,6 +19,7 @@ Claude needs a human call ─raise_decision─▶ Decisions ──human answer�
 ## Guardrails (never break these)
 
 - **Never touch Backlog.** Don't create, move, edit or comment on Backlog tasks, and don't move anything into Backlog. Backlog is how humans decide what work is released to you. Reading it is fine.
+- **No work starts from Backlog.** Backlog tasks are not available work, whatever their priority. "Next task" or "highest-priority task" always means To do. Don't start, plan, or offer to start a Backlog task, and don't ask the user to release one.
 - **Never move anything to Done.** Finished work goes to Review; a human closes it.
 - **Only work on tasks you've claimed.** A task in progress is locked to whoever claimed it. Don't work on, edit or move another agent's task.
 - **Don't release new work yourself.** The only items you create are bugs, decisions and subtasks of a task you have in progress.
@@ -53,7 +54,7 @@ When the user asks to see or check the board, `list_tasks` per column (or one co
 5. **Can't finish it** as described (wrong premise, out of your reach)? `release_task(id, reason)` puts it back in To do, unlocked. If a human needs to choose how to proceed, raise a decision instead and keep the task.
 6. **Next.** If the user asked you to "work the board", go back to step 1. When To do is empty:
    - If the user asked you to keep polling, `wait_for_task`. It waits for new work and claims it; call it again on timeout.
-   - Otherwise stop and summarise in chat what you did and what's waiting on the user (open decisions, untriaged bugs).
+   - Otherwise stop. If you did nothing this session, the answer is simply **"No work available."** Don't list or suggest Backlog tasks. If you did work, summarise what you did and what's waiting on the user (open decisions, untriaged bugs).
 
 ## Workflow 2: Bugs
 
