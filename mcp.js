@@ -32,7 +32,7 @@ async function api(method, path, body) {
       body: body && JSON.stringify(body),
     });
   } catch {
-    throw new Error(`Kanban server not reachable at ${BASE}. Ask the user to start it (npm start in the kanban repo).`);
+    throw new Error(`Signboard server not reachable at ${BASE}. Ask the user to start it (npm start in the kanban repo).`);
   }
   const data = await res.json();
   if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
@@ -95,7 +95,7 @@ const server = new McpServer(
   { name: 'kanban', version: '0.4.0' },
   {
     instructions:
-      'Kanban board for this project; follow the kanban skill. Work comes only from To do: claim a task (it moves to ' +
+      'Signboard, the kanban board for this project; follow the kanban skill. Work comes only from To do: claim a task (it moves to ' +
       'in_progress and is locked to you), then submit_for_review with a summary. Never touch Backlog — it is how humans ' +
       'release work. Raise any bug you find with raise_bug and any choice that belongs to the user with raise_decision ' +
       'instead of guessing. Never move anything to Done. Do not call the board\'s HTTP API directly; use these tools.',

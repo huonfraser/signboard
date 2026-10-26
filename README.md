@@ -1,6 +1,6 @@
-# Kanban Vibes
+# Signboard
 
-A lightweight, local kanban board for managing Claude Code work. You plan tasks in the browser; Claude Code picks them up, comments on progress and moves them across the board through an MCP server. Changes show up in the UI live.
+A lightweight, locally hosted kanban board, MCP server and Claude skill for managing Claude Code work. (看板, *kanban*, literally means "signboard".) You plan tasks in the browser; Claude Code picks them up, comments on progress and moves them across the board through an MCP server. Changes show up in the UI live.
 
 ```
 Browser UI ──┐

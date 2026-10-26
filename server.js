@@ -1,4 +1,4 @@
-// Kanban server: REST API + static UI. Zero dependencies, JSON file storage.
+// Signboard server: REST API + static UI. Zero dependencies, JSON file storage.
 // The server is the single writer to the data file; the UI and the MCP server both go through the API.
 import http from 'node:http';
 import fs from 'node:fs';
@@ -734,5 +734,5 @@ http
     });
   })
   .listen(PORT, '127.0.0.1', () => {
-    console.log(`Kanban running at http://localhost:${PORT}  (data: ${DATA_FILE})`);
+    console.log(`Signboard running at http://localhost:${PORT}  (data: ${DATA_FILE})`);
   });

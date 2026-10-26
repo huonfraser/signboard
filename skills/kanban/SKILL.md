@@ -1,11 +1,11 @@
 ---
 name: kanban
-description: Workflow for working from the local kanban board (the `kanban` MCP server). Use whenever the kanban MCP tools are available and you are doing project work, when the user says "work the board", "next task", "check the board", or refers to a task by number, and whenever you find a bug or reach a choice the user should make. Covers claiming from To do, opening each item in its own session (up to the user's Concurrent sessions setting), submitting for review, raising bugs into Bugs, raising decisions into Decisions, and the guardrails (never touch Backlog, never move to Done).
+description: Workflow for working from Signboard, the local kanban board (the `kanban` MCP server). Use whenever the kanban MCP tools are available and you are doing project work, when the user says "work the board", "next task", "check the board", or refers to a task by number, and whenever you find a bug or reach a choice the user should make. Covers claiming from To do, opening each item in its own session (up to the user's Concurrent sessions setting), submitting for review, raising bugs into Bugs, raising decisions into Decisions, and the guardrails (never touch Backlog, never move to Done).
 ---
 
-# Kanban workflow
+# Signboard workflow
 
-The board is how the user releases work to you and how you report back. Humans own the flow of work. You pick up what they release, report what you find, and hand finished work back.
+Signboard is a lightweight, locally hosted kanban board, MCP server and Claude skill. The board is how the user releases work to you and how you report back. Humans own the flow of work. You pick up what they release, report what you find, and hand finished work back.
 
 ```
             humans                     Claude                     humans

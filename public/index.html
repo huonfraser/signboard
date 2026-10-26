@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Kanban Vibes</title>
+<title>Signboard</title>
 <style>
   :root {
     --bg: #f4f5f7; --col: #ebecf0; --card: #fff; --text: #172b4d; --muted: #6b778c;
@@ -133,7 +133,7 @@
 <body>
 <header>
   <button class="icon-btn" id="menu-btn" aria-label="Projects menu">☰</button>
-  <h1 id="project-title">Kanban Vibes</h1>
+  <h1 id="project-title">Signboard</h1>
   <span id="modes"></span>
   <span class="status" id="status"></span>
   <span class="spacer"></span>
@@ -333,13 +333,13 @@ async function refresh(force = false) {
 function render() {
   const all = isAll();
   const project = currentProject();
-  $('#project-title').textContent = all ? 'All projects' : project?.name ?? 'Kanban Vibes';
+  $('#project-title').textContent = all ? 'All projects' : project?.name ?? 'Signboard';
   const s = !all && project?.settings;
   $('#modes').innerHTML = s
     ? [s.autofixBugs && '<span class="mode" title="Claude routes bugs itself">⚡ Autofix bugs</span>',
        s.chatDecisions && '<span class="mode" title="Claude records decisions you make in chat">💬 Chat decisions</span>'].filter(Boolean).join(' ')
     : '';
-  document.title = `${all ? 'All projects' : project?.name ?? ''} · Kanban Vibes`;
+  document.title = `${all ? 'All projects' : project?.name ?? ''} · Signboard`;
   renderMenu();
   // Answered decisions leave the decisions column, so whatever is in it is waiting on the user.
   const waiting = state.projects.reduce((n, p) => n + (p.counts.decisions || 0), 0);

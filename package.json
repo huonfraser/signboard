@@ -1,7 +1,7 @@
 {
-  "name": "kanban-vibes",
+  "name": "signboard",
   "version": "1.0.0",
-  "description": "Lightweight local kanban board with an MCP server for Claude Code",
+  "description": "Signboard: a lightweight, locally hosted kanban board, MCP server and Claude skill for Claude Code",
   "scripts": {
     "start": "node server.js",
     "mcp": "node mcp.js"
