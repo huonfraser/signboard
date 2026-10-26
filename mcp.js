@@ -13,7 +13,7 @@ const BASE = process.env.KANBAN_URL || `http://localhost:${process.env.KANBAN_PO
 const AGENT = process.env.KANBAN_AGENT || 'claude';
 const WORKDIR = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 
-const Column = z.enum(['backlog', 'todo', 'in_progress', 'review', 'done']);
+const Column = z.enum(['bugs', 'decisions', 'backlog', 'todo', 'in_progress', 'review', 'done']);
 const Priority = z.enum(['low', 'medium', 'high', 'urgent']);
 const ProjectRef = z.string().optional().describe('Project name or id. Defaults to the project linked to the current folder.');
 
@@ -55,9 +55,24 @@ async function currentProject(ref) {
   }
 }
 
+// Workflow guardrails. The UI (the user) can do anything; Claude, through these tools, cannot:
+// close work (done is the user's call after review), resolve decisions, or skip the review summary.
+function checkMove(task, column, note) {
+  if (column === task.column) return;
+  if (column === 'done') throw new Error('Only the user moves tasks to done. Move it to review with a summary note instead.');
+  if (task.kind === 'decision' && !task.answer) {
+    throw new Error(`#${task.id} is an open decision; only the user can resolve it (in the board UI). Use get_decisions to check for answers.`);
+  }
+  if (column === 'decisions') throw new Error('Use raise_decision to ask the user something; do not move tasks into decisions.');
+  if (column === 'review' && !note) throw new Error('Moving to review needs a note: what changed, how it was tested, any follow-ups.');
+}
+
+const KIND_MARK = { bug: '🐞 ', decision: '❓ ', task: '' };
+
 // Compact one-line summary for list views; full JSON for single-task views.
 const line = (t, projectName) =>
-  `#${t.id} [${t.column}] (${t.priority}) ${t.title}` +
+  `#${t.id} [${t.column}] (${t.priority}) ${KIND_MARK[t.kind] ?? ''}${t.title}` +
+  (t.kind === 'decision' && t.answer ? ` ⇒ answered: "${t.answer}"` : '') +
   (t.assignee ? ` @${t.assignee}` : '') +
   (t.tags.length ? ` {${t.tags.join(',')}}` : '') +
   (projectName ? `  — ${projectName}` : '');
@@ -77,7 +92,16 @@ function tool(name, description, inputSchema, handler) {
   });
 }
 
-const server = new McpServer({ name: 'kanban', version: '0.2.0' });
+const server = new McpServer(
+  { name: 'kanban', version: '0.3.0' },
+  {
+    instructions:
+      'Kanban board for this project. Follow the kanban skill workflow: claim or resume a task before starting work; ' +
+      'raise_bug for any bug you find (do not silently fix out-of-scope bugs); raise_decision whenever a choice belongs ' +
+      'to the user instead of guessing; check get_decisions for answers; finish by moving to review with a summary. ' +
+      'Never move tasks to done.',
+  },
+);
 
 // ---------- projects ----------
 
@@ -150,9 +174,116 @@ tool(
     project: ProjectRef,
   },
   async ({ project, ...fields }) => {
+    if (fields.column === 'bugs' || fields.column === 'decisions') {
+      throw new Error(`Use ${fields.column === 'bugs' ? 'raise_bug' : 'raise_decision'} instead of create_task for that column.`);
+    }
+    if (fields.column === 'done' || fields.column === 'review') throw new Error(`New tasks cannot start in ${fields.column}.`);
     const p = await currentProject(project);
     const task = await api('POST', '/api/tasks', { ...fields, projectId: p.id, author: AGENT });
     return text(`Created ${line(task)} in "${p.name}"`);
+  },
+);
+
+// ---------- bugs and decisions ----------
+
+tool(
+  'raise_bug',
+  'Record a bug you found in the Bugs column of the current project. Use this for any defect you notice, including ones outside ' +
+    'your current task, instead of silently fixing or ignoring it. Check list_tasks(column: "bugs") first to avoid duplicates.',
+  {
+    title: z.string().describe('Short symptom, e.g. "Login fails when email has uppercase letters"'),
+    summary: z.string().describe('What is wrong and why it matters'),
+    steps_to_reproduce: z.string().optional(),
+    expected: z.string().optional(),
+    actual: z.string().optional(),
+    location: z.string().optional().describe('Files / functions / lines involved, e.g. src/auth.ts:42'),
+    severity: Priority.optional().describe('low | medium | high | urgent (defaults to medium)'),
+    found_while_task_id: z.number().int().optional().describe('The task you were working on when you found it'),
+    project: ProjectRef,
+  },
+  async ({ title, summary, steps_to_reproduce, expected, actual, location, severity, found_while_task_id, project }) => {
+    const p = await currentProject(project);
+    const sections = [
+      summary,
+      steps_to_reproduce && `**Steps to reproduce**\n${steps_to_reproduce}`,
+      expected && `**Expected**\n${expected}`,
+      actual && `**Actual**\n${actual}`,
+      location && `**Location**\n${location}`,
+    ].filter(Boolean);
+    const task = await api('POST', '/api/tasks', {
+      title,
+      description: sections.join('\n\n'),
+      column: 'bugs',
+      priority: severity,
+      tags: ['bug'],
+      relatedTaskId: found_while_task_id,
+      projectId: p.id,
+      author: AGENT,
+    });
+    return text(`Raised bug ${line(task)} in "${p.name}"`);
+  },
+);
+
+tool(
+  'raise_decision',
+  'Ask the user to make a decision, recorded in the Decisions column. Use this whenever a choice is the user\'s to make ' +
+    '(product behaviour, architecture or dependency choices, scope changes, anything destructive or hard to reverse, ' +
+    'ambiguous requirements) instead of guessing. Give 2-4 concrete options and your recommendation. ' +
+    'Then work on something that does not depend on the answer, or stop and tell the user you are waiting.',
+  {
+    question: z.string().describe('The decision, phrased as a question'),
+    context: z.string().describe('Background the user needs: what prompted this, constraints, trade-offs of each option'),
+    options: z.array(z.string()).min(2).max(6).describe('Concrete, mutually exclusive choices'),
+    recommendation: z.string().optional().describe('Which option you recommend and why'),
+    blocking_task_id: z.number().int().optional().describe('Task that cannot proceed until this is decided'),
+    priority: Priority.optional().describe('How urgently you need an answer (defaults to medium)'),
+    project: ProjectRef,
+  },
+  async ({ question, context, options, recommendation, blocking_task_id, priority, project }) => {
+    const p = await currentProject(project);
+    const task = await api('POST', '/api/tasks', {
+      title: question,
+      description: context,
+      column: 'decisions',
+      options,
+      recommendation,
+      priority,
+      tags: ['decision'],
+      relatedTaskId: blocking_task_id,
+      projectId: p.id,
+      author: AGENT,
+    });
+    return text(`Raised decision ${line(task)} in "${p.name}". The user will answer it on the board; check with get_decisions.`);
+  },
+);
+
+tool(
+  'get_decisions',
+  'List decisions in the current project with their answers. Check this at the start of a session and before resuming a blocked task.',
+  {
+    status: z.enum(['open', 'answered', 'all']).optional().describe('Defaults to all'),
+    project: ProjectRef,
+  },
+  async ({ status = 'all', project }) => {
+    const p = await currentProject(project);
+    let decisions = await api('GET', `/api/tasks?project=${p.id}&kind=decision`);
+    if (status === 'open') decisions = decisions.filter((d) => !d.answer);
+    if (status === 'answered') decisions = decisions.filter((d) => d.answer);
+    if (!decisions.length) return text(`No ${status === 'all' ? '' : `${status} `}decisions in "${p.name}".`);
+    return text(
+      decisions
+        .map((d) =>
+          [
+            `#${d.id} ${d.answer ? 'ANSWERED' : 'OPEN'}: ${d.title}`,
+            `  options: ${d.options.map((o) => `"${o}"`).join(', ') || '(none given)'}`,
+            d.answer && `  answer: ${d.answer}`,
+            d.relatedTaskId && `  blocks task #${d.relatedTaskId}`,
+          ]
+            .filter(Boolean)
+            .join('\n'),
+        )
+        .join('\n'),
+    );
   },
 );
 
@@ -170,6 +301,11 @@ tool(
     project: z.string().optional().describe('Project name or id to move the task to'),
   },
   async ({ id, project, ...fields }) => {
+    if (fields.column) {
+      // Review needs a summary, which update_task has no field for, so route it through move_task.
+      if (fields.column === 'review') throw new Error('Use move_task with a note to move a task to review.');
+      checkMove(await api('GET', `/api/tasks/${id}`), fields.column);
+    }
     const projectId = project ? (await findByRef(project)).id : undefined;
     const task = await api('PATCH', `/api/tasks/${id}`, { ...fields, projectId, author: AGENT });
     return text(`Updated ${line(task)}`);
@@ -178,9 +314,11 @@ tool(
 
 tool(
   'move_task',
-  'Move a task to another column, optionally leaving a note explaining why (e.g. what was done, what is blocking).',
+  'Move a task to another column, leaving a note explaining why (what was done, what is blocking). ' +
+    'A note is required for review. You cannot move tasks to done or resolve decisions; the user does that.',
   { id: z.number().int(), column: Column, note: z.string().optional() },
   async ({ id, column, note }) => {
+    checkMove(await api('GET', `/api/tasks/${id}`), column, note);
     const task = await api('PATCH', `/api/tasks/${id}`, { column, author: AGENT });
     if (note) await api('POST', `/api/tasks/${id}/comments`, { text: note, author: AGENT });
     return text(`Moved ${line(task)}`);
@@ -199,16 +337,20 @@ tool(
 
 tool(
   'claim_next_task',
-  'Claim the highest-priority unassigned task in the current project from a column (default todo): assigns it to you and moves it to in_progress. Returns the full task, or a message if the queue is empty.',
+  'Claim the highest-priority unassigned task in the current project from a column (default todo; use "bugs" when asked to fix bugs): ' +
+    'assigns it to you and moves it to in_progress. Returns the full task, or a message if the queue is empty.',
   { column: Column.optional(), tag: z.string().optional(), project: ProjectRef },
   async ({ column, tag, project }) => {
+    if (['decisions', 'review', 'done', 'in_progress'].includes(column)) throw new Error(`Cannot claim from ${column}.`);
     const p = await currentProject(project);
     const { task } = await api('POST', '/api/claim', { assignee: AGENT, projectId: p.id, column, tag });
     return task ? json(task) : text(`No unassigned tasks to claim in "${p.name}".`);
   },
 );
 
-tool('delete_task', 'Permanently delete a task. Prefer moving to done unless the task was created in error.', { id: z.number().int() }, async ({ id }) => {
+tool('delete_task', 'Permanently delete a task you created in error (e.g. a duplicate bug). You cannot delete tasks the user created.', { id: z.number().int() }, async ({ id }) => {
+  const task = await api('GET', `/api/tasks/${id}`);
+  if (task.activity[0]?.author !== AGENT) throw new Error(`#${id} was not created by ${AGENT}; ask the user to delete it.`);
   await api('DELETE', `/api/tasks/${id}`);
   return text(`Deleted task #${id}`);
 });

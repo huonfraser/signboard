@@ -12,8 +12,11 @@ const PORT = Number(process.env.KANBAN_PORT || 4477);
 const DATA_FILE = process.env.KANBAN_DATA || path.join(ROOT, 'data', 'board.json');
 const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
 
-const COLUMNS = ['backlog', 'todo', 'in_progress', 'review', 'done'];
+// bugs and decisions are intake lanes Claude raises into; the rest is the normal work flow.
+const COLUMNS = ['bugs', 'decisions', 'backlog', 'todo', 'in_progress', 'review', 'done'];
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
+// A task keeps its kind after it leaves its intake column, so answered decisions stay findable.
+const KIND_FOR_COLUMN = { bugs: 'bug', decisions: 'decision' };
 const PRIORITY_RANK = { urgent: 0, high: 1, medium: 2, low: 3 };
 
 // ---------- storage ----------
@@ -32,7 +35,10 @@ function load() {
   if (!data.projects.length) {
     data.projects.push({ id: data.nextProjectId++, name: 'General', paths: [], createdAt: new Date().toISOString() });
   }
-  for (const t of data.tasks) t.projectId ??= data.projects[0].id;
+  for (const t of data.tasks) {
+    t.projectId ??= data.projects[0].id;
+    t.kind ??= 'task';
+  }
   return data;
 }
 
@@ -91,9 +97,12 @@ function createTask(input) {
   validate(input);
   const column = input.column || 'todo';
   const projectId = Number(input.projectId);
+  const kind = KIND_FOR_COLUMN[column] || 'task';
+  const related = input.relatedTaskId ? findTask(input.relatedTaskId) : null;
   const task = {
     id: board.nextId++,
     projectId,
+    kind,
     title: String(input.title).trim(),
     description: input.description || '',
     column,
@@ -101,17 +110,50 @@ function createTask(input) {
     assignee: input.assignee || null,
     tags: Array.isArray(input.tags) ? input.tags : [],
     order: nextOrder(projectId, column),
+    relatedTaskId: related?.id ?? null,
     createdAt: now(),
     updatedAt: now(),
     activity: [],
   };
+  if (kind === 'decision') {
+    task.options = Array.isArray(input.options) ? input.options.map(String).filter(Boolean) : [];
+    task.recommendation = input.recommendation || null;
+    task.answer = null;
+    task.answeredAt = null;
+  }
   addActivity(task, input.author, `Created in ${column}`, 'event');
+  if (related) {
+    const what = kind === 'decision' ? 'Waiting on decision' : kind === 'bug' ? 'Bug raised' : 'Related task created';
+    addActivity(related, input.author, `${what} #${task.id}: ${task.title}`, 'event');
+    related.updatedAt = now();
+  }
   board.tasks.push(task);
   save();
   return task;
 }
 
-const EDITABLE = ['title', 'description', 'column', 'priority', 'assignee', 'tags', 'order', 'projectId'];
+// The user answers a decision: record the answer, file it in done, and tell the task it was blocking.
+function decideTask(id, { answer, author }) {
+  if (!answer || !String(answer).trim()) throw new HttpError(400, 'answer is required');
+  const task = findTask(id);
+  if (task.kind !== 'decision') throw new HttpError(400, `Task ${id} is not a decision`);
+  if (task.answer) throw new HttpError(409, `Decision ${id} was already answered: ${task.answer}`);
+  task.answer = String(answer).trim();
+  task.answeredAt = now();
+  addActivity(task, author, `Decided: ${task.answer}`, 'comment');
+  updateTask(task.id, { column: 'done', author });
+  if (task.relatedTaskId) {
+    const related = board.tasks.find((t) => t.id === task.relatedTaskId);
+    if (related) {
+      addActivity(related, author, `Decision #${task.id} answered: ${task.answer}`, 'event');
+      related.updatedAt = now();
+    }
+  }
+  save();
+  return task;
+}
+
+const EDITABLE = ['title', 'description', 'column', 'priority', 'assignee', 'tags', 'order', 'projectId', 'options', 'recommendation'];
 
 function updateTask(id, input) {
   const task = findTask(id);
@@ -131,6 +173,17 @@ function updateTask(id, input) {
       changes.push(input[key] ? `Assigned to ${input[key]}` : 'Unassigned');
     } else if (key !== 'order') {
       changes.push(`Updated ${key}`);
+    }
+  }
+  // Dropping a card into an intake column makes it that kind (e.g. a task dragged into Bugs becomes a bug).
+  const intakeKind = KIND_FOR_COLUMN[task.column];
+  if (intakeKind && task.kind !== intakeKind) {
+    task.kind = intakeKind;
+    if (intakeKind === 'decision') {
+      task.options ??= [];
+      task.recommendation ??= null;
+      task.answer ??= null;
+      task.answeredAt ??= null;
     }
   }
   // A column or project change lands the task at the end of its new list unless an order was given.
@@ -176,6 +229,7 @@ function listTasks(query) {
   let tasks = board.tasks;
   if (query.project) tasks = tasks.filter((t) => t.projectId === Number(query.project));
   if (query.column) tasks = tasks.filter((t) => t.column === query.column);
+  if (query.kind) tasks = tasks.filter((t) => t.kind === query.kind);
   if (query.assignee) tasks = tasks.filter((t) => t.assignee === query.assignee);
   if (query.tag) tasks = tasks.filter((t) => t.tags.includes(query.tag));
   if (query.q) {
@@ -387,6 +441,7 @@ async function handle(req, res) {
     if (id && parts[3] === 'comments' && method === 'POST') {
       return send(res, 201, commentTask(id, await readBody(req)));
     }
+    if (id && parts[3] === 'decide' && method === 'POST') return send(res, 200, decideTask(id, await readBody(req)));
     if (id && !parts[3]) {
       if (method === 'GET') return send(res, 200, findTask(id));
       if (method === 'PATCH') return send(res, 200, updateTask(id, await readBody(req)));

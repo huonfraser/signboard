@@ -38,6 +38,25 @@
   .pill { padding: 1px 6px; border-radius: 10px; background: var(--col); }
   .pill.agent { background: var(--accent); color: #fff; }
   .pill.project { border: 1px solid var(--border); background: transparent; }
+  .pill.bug { background: color-mix(in srgb, var(--urgent) 15%, transparent); color: var(--urgent); }
+  .pill.decision { background: color-mix(in srgb, var(--high) 20%, transparent); color: color-mix(in srgb, var(--high) 70%, var(--text)); }
+  .pill.decided { background: color-mix(in srgb, #36b37e 18%, transparent); color: color-mix(in srgb, #36b37e 75%, var(--text)); }
+  .column[data-column="bugs"] { border-top: 3px solid var(--urgent); }
+  .column[data-column="decisions"] { border-top: 3px solid var(--high); }
+  .column[data-column="bugs"] h2 > span:first-child::before { content: "🐞 "; }
+  .column[data-column="decisions"] h2 > span:first-child::before { content: "❓ "; }
+  .badge { display: none; padding: 4px 10px; border-radius: 12px; border: none; font-size: 12px; font-weight: 600; cursor: pointer;
+    background: color-mix(in srgb, var(--high) 22%, transparent); color: color-mix(in srgb, var(--high) 70%, var(--text)); }
+  .badge.show { display: inline-block; }
+  .decision-panel { display: grid; gap: 8px; padding: 12px; border-radius: 8px; background: color-mix(in srgb, var(--high) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--high) 35%, transparent); }
+  .decision-panel h4 { margin: 0; font-size: 12px; text-transform: uppercase; color: var(--muted); }
+  .decision-panel .rec { font-size: 13px; white-space: pre-wrap; }
+  .decision-panel .opts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .decision-panel .opts button { text-align: left; }
+  .decision-panel .opts button.recommended { border-color: var(--accent); }
+  .decision-panel .answer { font-weight: 600; white-space: pre-wrap; }
+  .related { font-size: 12px; color: var(--muted); }
+  .related a { color: inherit; }
   .p-low { border-left-color: var(--low); } .p-medium { border-left-color: var(--medium); }
   .p-high { border-left-color: var(--high); } .p-urgent { border-left-color: var(--urgent); }
   .add { padding: 8px; }
@@ -99,6 +118,7 @@
   <h1 id="project-title">Kanban Vibes</h1>
   <span class="status" id="status"></span>
   <span class="spacer"></span>
+  <button class="badge" id="decision-badge" title="Decisions waiting on you"></button>
   <input id="filter" placeholder="Filter tasks…" />
 </header>
 <main class="board" id="board"></main>
@@ -120,7 +140,9 @@
       <label>Assignee<input name="assignee" placeholder="unassigned" /></label>
       <label>Tags<input name="tags" placeholder="comma,separated" /></label>
     </div>
+    <div class="related" id="related" hidden></div>
     <div class="field"><label>Description<textarea name="description" placeholder="Details, acceptance criteria, context for Claude…"></textarea></label></div>
+    <div class="decision-panel" id="decision-panel" hidden></div>
     <div class="activity" id="activity"></div>
     <div class="field"><label>Comment<textarea name="comment" style="min-height:50px" placeholder="Add a comment…"></textarea></label></div>
     <div class="actions">
@@ -162,7 +184,7 @@
 </dialog>
 
 <script>
-const LABELS = { backlog: 'Backlog', todo: 'To do', in_progress: 'In progress', review: 'Review', done: 'Done' };
+const LABELS = { bugs: 'Bugs', decisions: 'Decisions', backlog: 'Backlog', todo: 'To do', in_progress: 'In progress', review: 'Review', done: 'Done' };
 let state = { columns: [], priorities: [], projects: [], tasks: [] };
 let dragId = null;
 let editingId = null;
@@ -232,6 +254,11 @@ function render() {
   $('#project-title').textContent = all ? 'All projects' : project?.name ?? 'Kanban Vibes';
   document.title = `${all ? 'All projects' : project?.name ?? ''} · Kanban Vibes`;
   renderMenu();
+  // Answered decisions move to done, so whatever is in the decisions column is waiting on the user.
+  const waiting = state.projects.reduce((n, p) => n + (p.counts.decisions || 0), 0);
+  const badge = $('#decision-badge');
+  badge.textContent = `❓ ${waiting} decision${waiting === 1 ? '' : 's'} waiting`;
+  badge.classList.toggle('show', waiting > 0);
 
   const q = $('#filter').value.toLowerCase();
   const board = $('#board');
@@ -271,7 +298,12 @@ function renderMenu() {
     item('all', 'All projects', `${totalOpen} open`, false) +
     '<li class="divider" role="separator"></li>' +
     state.projects
-      .map((p) => item(p.id, p.name, `${open(p)} open · ${p.paths.length ? `🔗 ${p.paths.length} folder${p.paths.length > 1 ? 's' : ''}` : 'not linked'}`, true))
+      .map((p) => item(p.id, p.name, [
+        `${open(p)} open`,
+        p.counts.decisions && `❓ ${p.counts.decisions}`,
+        p.counts.bugs && `🐞 ${p.counts.bugs}`,
+        p.paths.length ? `🔗 ${p.paths.length} folder${p.paths.length > 1 ? 's' : ''}` : 'not linked',
+      ].filter(Boolean).join(' · '), true))
       .join('');
 }
 
@@ -285,9 +317,11 @@ function cardEl(t, showProject) {
     <div class="meta">
       <span>#${t.id}</span>
       ${showProject ? `<span class="pill project">${esc(projectName(t.projectId))}</span>` : ''}
+      ${t.kind === 'bug' ? '<span class="pill bug">bug</span>' : ''}
+      ${t.kind === 'decision' ? (t.answer ? '<span class="pill decided">✓ decided</span>' : '<span class="pill decision">needs decision</span>') : ''}
       ${t.priority !== 'medium' ? `<span class="pill">${t.priority}</span>` : ''}
       ${t.assignee ? `<span class="pill ${isAgent ? 'agent' : ''}">${esc(t.assignee)}</span>` : ''}
-      ${t.tags.map((g) => `<span class="pill">${esc(g)}</span>`).join('')}
+      ${t.tags.filter((g) => g !== t.kind).map((g) => `<span class="pill">${esc(g)}</span>`).join('')}
       ${t.activity.some((a) => a.kind === 'comment') ? `<span>💬 ${t.activity.filter((a) => a.kind === 'comment').length}</span>` : ''}
       <span style="margin-left:auto">${ago(t.updatedAt)}</span>
     </div>`;
@@ -359,11 +393,73 @@ function openTask(id) {
   f.tags.value = t.tags.join(', ');
   f.description.value = t.description;
   f.comment.value = '';
+  renderRelated(t);
+  renderDecision(t);
   $('#activity').innerHTML = [...t.activity].reverse().map((a) => `<div class="entry ${a.kind}">
       <span class="who">${esc(a.author)}</span><span class="when">${ago(a.at)}</span>
       <div class="body">${esc(a.text)}</div></div>`).join('');
   $('#dialog').showModal();
 }
+
+function renderRelated(t) {
+  const el = $('#related');
+  const label = { decision: 'Blocks', bug: 'Found while working on' }[t.kind] ?? 'Related to';
+  const rel = t.relatedTaskId && state.tasks.find((x) => x.id === t.relatedTaskId);
+  el.hidden = !t.relatedTaskId;
+  el.innerHTML = t.relatedTaskId
+    ? `${label} ${rel ? `<a href="#" data-open="${rel.id}">#${rel.id} ${esc(rel.title)}</a>` : `#${t.relatedTaskId}`}`
+    : '';
+}
+$('#related').addEventListener('click', (e) => {
+  const a = e.target.closest('[data-open]');
+  if (!a) return;
+  e.preventDefault();
+  openTask(Number(a.dataset.open));
+});
+
+// Decisions: show the options Claude offered as one-click answers, or the answer once given.
+function renderDecision(t) {
+  const el = $('#decision-panel');
+  el.hidden = t.kind !== 'decision';
+  if (el.hidden) return;
+  if (t.answer) {
+    el.innerHTML = `<h4>Decided ${ago(t.answeredAt)}</h4><div class="answer">${esc(t.answer)}</div>`;
+    return;
+  }
+  const opts = t.options ?? [];
+  el.innerHTML = `<h4>Your decision</h4>
+    ${t.recommendation ? `<div class="rec"><strong>Claude recommends:</strong> ${esc(t.recommendation)}</div>` : ''}
+    ${opts.length ? `<div class="opts">${opts.map((o, i) => `<button type="button" data-answer="${i}">${esc(o)}</button>`).join('')}</div>` : ''}
+    <div class="opts"><button type="button" data-answer="custom">Answer with my comment</button></div>
+    <p class="hint">Picking an option answers the decision and files it in Done. Anything typed in the comment box is added to the answer.</p>`;
+  // Highlight the option the recommendation quotes; the longest match wins so "Soft delete" doesn't
+  // light up when "Soft delete + purge" is the one recommended.
+  const rec = t.recommendation?.toLowerCase() ?? '';
+  const best = opts.reduce((b, o, i) => (rec.includes(o.toLowerCase()) && (b < 0 || o.length > opts[b].length) ? i : b), -1);
+  if (best >= 0) el.querySelector(`[data-answer="${best}"]`).classList.add('recommended');
+}
+$('#decision-panel').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-answer]');
+  if (!b) return;
+  const t = state.tasks.find((x) => x.id === editingId);
+  const comment = $('#form').comment.value.trim();
+  const choice = b.dataset.answer === 'custom' ? '' : t.options[Number(b.dataset.answer)];
+  const answer = [choice, comment].filter(Boolean).join(' — ');
+  if (!answer) return alert('Type your answer in the comment box first.');
+  try {
+    await api('POST', `/api/tasks/${t.id}/decide`, { answer });
+    $('#dialog').close();
+    await refresh(true);
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+$('#decision-badge').addEventListener('click', () => {
+  const p = currentProject();
+  if (!p || !p.counts.decisions) selectProject('all');
+  document.querySelector('[data-column="decisions"]')?.scrollIntoView({ behavior: 'smooth', inline: 'start' });
+});
 
 $('#form').addEventListener('submit', async (e) => {
   e.preventDefault();

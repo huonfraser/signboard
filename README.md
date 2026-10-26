@@ -10,8 +10,17 @@ Claude Code ─┘    via MCP (mcp.js, stdio)
 
 - **Stack:** Node 24+, zero-dependency HTTP server, vanilla HTML/JS UI, JSON file storage. The only npm deps are `@modelcontextprotocol/sdk` and `zod` for the MCP server.
 - **Projects:** each kanban project has its own board and one or more linked folders (☰ menu in the UI).
-- **Columns:** `backlog` → `todo` → `in_progress` → `review` → `done`
+- **Columns:** `bugs` · `decisions` · `backlog` → `todo` → `in_progress` → `review` → `done`
 - **Priorities:** `low`, `medium`, `high`, `urgent`
+
+## Bugs and decisions
+
+Two intake columns where Claude reports back to you:
+
+- **🐞 Bugs:** Claude raises a bug (`raise_bug`) whenever it finds a defect, including ones outside its current task, with steps to reproduce, expected and actual behaviour, and the file location. Out-of-scope bugs are recorded, not silently fixed. Triage them by dragging to To do, or tell Claude to "fix the bugs".
+- **❓ Decisions:** when a choice belongs to you (unspecified behaviour, architecture or dependencies, anything destructive, scope changes), Claude raises a decision (`raise_decision`) with options and a recommendation instead of guessing. The blocked task gets a comment pointing at it. Open the card and click an option, or type your own answer. The decision files itself in Done, the blocked task is told the answer, and Claude picks it up with `get_decisions` next session. The header badge counts decisions waiting on you across all projects.
+
+Cards keep their kind after leaving these columns, and dragging a card into Bugs or Decisions turns it into that kind.
 
 ## Projects and Claude Code folders
 
@@ -57,23 +66,41 @@ The board server must be running (`npm start`); the MCP server is a thin client 
 | `get_task` | Full task with description and activity log |
 | `create_task` | Add a task to the current project (subtasks, follow-ups) |
 | `update_task` | Change title, description, column, priority, assignee, tags, or project |
-| `move_task` | Move to a column with an optional note |
+| `move_task` | Move to a column with a note (required for review) |
 | `add_comment` | Progress updates, findings, questions for you |
-| `claim_next_task` | Take the current project's top unassigned task (priority, then board order), assign it and move it to `in_progress` |
-| `delete_task` | Remove a task |
+| `claim_next_task` | Take the current project's top unassigned task (priority, then board order) from To do, or Bugs, assign it and move it to `in_progress` |
+| `raise_bug` | Record a bug in Bugs with repro steps, expected/actual, location, severity |
+| `raise_decision` | Ask you to decide: question, context, 2–6 options, recommendation, blocking task |
+| `get_decisions` | Open / answered decisions with your answers |
+| `delete_task` | Remove a task Claude created in error |
 
-### Suggested workflow (paste into a project's CLAUDE.md)
+### Workflow guardrails
 
-```markdown
-## Task board
-Work is tracked on the kanban MCP server.
-- Start with `claim_next_task` (or the task id I give you) and read its description.
-- Comment with `add_comment` when you make a meaningful decision or hit a blocker.
-- Create follow-up tasks in `backlog` instead of expanding scope.
-- When done, `move_task` to `review` with a short summary of what changed and how it was tested. Never move tasks to `done` — I do that after review.
+The MCP tools enforce the workflow. Claude can't work around these limits; you can do anything in the UI.
+
+- Claude can't move tasks to Done; you close them after review.
+- Claude can't resolve, move or claim an open decision; only you can answer it.
+- Moving to Review requires a note (what changed, how it was verified, follow-ups).
+- Bugs and decisions can only be created through `raise_bug` and `raise_decision`, so they're always structured.
+- Claude can only delete tasks it created.
+
+The MCP server also sends Claude a short instruction about the workflow whenever it connects.
+
+## The kanban skill
+
+[`skills/kanban/SKILL.md`](skills/kanban/SKILL.md) is a Claude Code skill with the full workflow:
+- the start-of-session checks (linked project, answered decisions, resuming in-progress work),
+- when to raise a bug versus fix it,
+- what counts as your decision,
+- what a review note must contain.
+
+Install it for all projects by symlinking it into your user skills, so edits here take effect immediately:
+
+```bash
+mkdir -p ~/.claude/skills && ln -s "$(pwd)/skills/kanban" ~/.claude/skills/kanban
 ```
 
-Then just tell Claude: *"work the board"*.
+Then in any linked project just tell Claude *"work the board"*.
 
 ## REST API
 
@@ -86,12 +113,13 @@ Then just tell Claude: *"work the board"*.
 | POST | `/api/projects/:id/paths` | `{path}`: link one more folder |
 | GET | `/api/projects/resolve` | `?path=`: project linked to a folder (or 404) |
 | GET | `/api/claude-projects` | folders Claude Code has been used in, newest first |
-| GET | `/api/tasks` | `?project=&column=&assignee=&tag=&q=` |
-| POST | `/api/tasks` | `{title, projectId, description?, column?, priority?, assignee?, tags?, author?}` |
+| GET | `/api/tasks` | `?project=&column=&kind=&assignee=&tag=&q=` (`kind`: task, bug, decision) |
+| POST | `/api/tasks` | `{title, projectId, description?, column?, priority?, assignee?, tags?, relatedTaskId?, author?}`; decisions also take `options?, recommendation?` |
 | GET | `/api/tasks/:id` | |
 | PATCH | `/api/tasks/:id` | any editable field, plus `author?` |
 | DELETE | `/api/tasks/:id` | |
 | POST | `/api/tasks/:id/comments` | `{text, author?}` |
+| POST | `/api/tasks/:id/decide` | `{answer, author?}`: answer a decision, move it to done, notify the blocked task |
 | POST | `/api/claim` | `{assignee, projectId, column?, tag?}` → `{task}` or `{task: null}` |
 
 Boards created before projects existed are migrated on startup: all their tasks move into a "General" project.
