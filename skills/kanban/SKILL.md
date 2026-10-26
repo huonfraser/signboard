@@ -1,81 +1,98 @@
 ---
 name: kanban
-description: Workflow for working from the local kanban board (the `kanban` MCP server). Use whenever the kanban MCP tools are available and you are doing project work, when the user says "work the board", "next task", "check the board", or refers to a task by number, and whenever you find a bug or reach a decision the user should make. Covers claiming tasks, logging progress, raising bugs into the Bugs column, raising decisions into the Decisions column, and handing work back for review.
+description: Workflow for working from the local kanban board (the `kanban` MCP server). Use whenever the kanban MCP tools are available and you are doing project work, when the user says "work the board", "next task", "check the board", or refers to a task by number, and whenever you find a bug or reach a choice the user should make. Covers claiming from To do, submitting for review, raising bugs into Bugs, raising decisions into Decisions, and the guardrails (never touch Backlog, never move to Done).
 ---
 
 # Kanban workflow
 
-The kanban board is the shared record between you and the user. You keep it accurate as you work, so the user can see what you're doing, what you found, and what you need from them without reading the transcript.
+The board is how the user releases work to you and how you report back. Humans own the flow of work. You pick up what they release, report what you find, and hand finished work back.
 
-Columns: **Bugs** · **Decisions** · Backlog · To do · In progress · Review · Done.
+```
+            humans                     Claude                     humans
+Backlog ───────────▶ To do ──claim──▶ In progress ──submit──▶ Review ───────▶ Done
+                                 (locked to you)
 
-The MCP tools enforce some of this workflow. Claude cannot move tasks to Done, resolve decisions, move to Review without a note, or delete tasks it didn't create. Don't try to work around these limits; they are the workflow.
+Claude finds a bug       ──raise_bug──────▶ Bugs      ──human triage──▶ Backlog / To do
+Claude needs a human call ─raise_decision─▶ Decisions ──human answer──▶ Backlog / To do
+```
 
-## 1. Start of session
+## Guardrails (never break these)
 
-1. Call `current_project`. If the folder isn't linked, ask the user which project it belongs to (show `list_projects`), then `link_project`. Don't guess.
-2. Call `get_decisions`. For each **answered** decision you raised, read the answer and act on it: unblock the task it was blocking and comment on that task saying which decision unblocked it.
-3. Call `list_tasks(assignee: "claude", column: "in_progress")`. If something is already in progress, resume it rather than claiming new work.
+- **Never touch Backlog.** Don't create, move, edit or comment on Backlog tasks, and don't move anything into Backlog. Backlog is how humans decide what work is released to you. Reading it is fine.
+- **Never move anything to Done.** Finished work goes to Review; a human closes it.
+- **Only work on tasks you've claimed.** A task in progress is locked to whoever claimed it. Don't work on, edit or move another agent's task.
+- **Don't release new work yourself.** The only items you create are bugs, decisions and subtasks of a task you have in progress.
+- **Never answer a decision yourself.** Only record an answer the user actually gave, and only when "Decisions from chat" is on (Workflow 3).
+- **Use the MCP tools only.** Never call the board's HTTP API directly (curl, fetch, scripts) or edit its data file.
 
-## 2. Picking up work
+The server enforces these guardrails and returns an error explaining why. Treat that error as the workflow working, not as an obstacle to route around.
 
-- If the user named a task, `get_task` it, then `update_task(id, assignee: "claude")` and `move_task(id, "in_progress")`.
-- Otherwise `claim_next_task` (from To do). If the user asks you to fix bugs, `claim_next_task(column: "bugs")`.
-- Read the full description and activity log before starting. If the acceptance criteria are unclear in a way that changes what you'd build, raise a decision (section 5) rather than guessing.
+## Start of session
 
-## 3. While working
+1. `current_project`. Note the two settings it reports: **Autofix bugs** and **Decisions from chat**. If the folder isn't linked, ask the user which project it belongs to (show `list_projects`), then `link_project`. Don't guess.
+2. `list_tasks(assignee: "claude", column: "in_progress")`. If you have something in progress, resume it before claiming anything new.
+3. `get_decisions(status: "answered")`. Any answered decision now sitting in **To do** is released work. If it unblocks a task you have in progress, `claim_task` it, apply the answer in that task, and submit both. Otherwise treat it like any To do task.
 
-- `add_comment` at meaningful points: approach chosen, a non-obvious discovery, partial progress on long tasks. Keep it short and factual. Don't post a running commentary.
-- Work you discover that's **outside the current task's scope**: `create_task` in `backlog` with enough context to pick up cold. Don't expand scope silently.
-- Stay on one task at a time. If you must stop partway, comment on what's done and what's left.
+## Workflow 1: Tasks
 
-## 4. Bugs → `raise_bug`
+1. **Claim.** If the user named a task, `claim_task(id)`. Otherwise `claim_next_task` takes the top-priority unassigned task from To do. Claiming moves it to In progress and locks it to you.
+2. **Read** the full description and activity log (`get_task`). If the requirements are unclear in a way that changes what you'd build, go to Workflow 3 rather than guessing.
+3. **Work.** `add_comment` at meaningful points: approach chosen, a non-obvious finding, partial progress on a long task. Keep comments short; no running commentary.
+   - **Too big?** `create_subtask(parent_id, …)` puts a piece of *this* task into To do.
+   - **Other ideas, follow-ups or refactors** you notice: don't create tasks for them. List them under "Follow-ups" in your review summary, so the human can add them to Backlog if they want them.
+4. **Submit.** Verify first (run the tests, typecheck, exercise the change), then `submit_for_review(id, summary)`. The summary covers:
+   - **What changed:** files and areas.
+   - **How it was verified:** the commands you ran and their results. Say plainly if something is untested.
+   - **Bugs:** raised or fixed, by number.
+   - **Decisions:** raised or applied, by number.
+   - **Follow-ups:** suggestions for Backlog.
+5. **Can't finish it** as described (wrong premise, out of your reach)? `release_task(id, reason)` puts it back in To do, unlocked. If a human needs to choose how to proceed, raise a decision instead and keep the task.
+6. **Next.** If the user asked you to "work the board", go back to step 1. When To do is empty:
+   - If the user asked you to keep polling, `wait_for_task`. It waits for new work and claims it; call it again on timeout.
+   - Otherwise stop and summarise in chat what you did and what's waiting on the user (open decisions, untriaged bugs).
 
-Raise a bug **whenever you find a defect**, whether in the code you're touching, code you're reading, tests, tooling, or behaviour you observe. This includes bugs unrelated to your current task.
+## Workflow 2: Bugs
 
-- First check `list_tasks(column: "bugs")` (and `query:` with a keyword) for an existing entry. If one exists, `add_comment` on it with any new information instead of raising a duplicate.
-- Fill in `summary`, `steps_to_reproduce`, `expected`, `actual`, and `location` (file:line) where you know them. Set `severity` honestly: urgent means data loss, security, or a broken main path.
-- Pass `found_while_task_id` with your current task.
-- **Fix or not?**
-  - Fix it as part of the current task only if it's inside the task's scope or blocks it. Still raise it, then note the fix in a comment on the bug and in your review summary.
-  - Otherwise raise it and carry on. The user triages Bugs.
-- A bug is not: a style preference, a refactor opportunity, or a missing feature. Those go to `backlog` via `create_task`, if anywhere.
+Raise a bug **whenever you find a defect**: in code you're changing or reading, in tests or tooling, or in behaviour you observe. This includes bugs unrelated to your task.
 
-## 5. Decisions → `raise_decision`
+1. **Check for duplicates:** `list_tasks(kind: "bug")`, plus `query:` with a keyword. If the bug is already raised, `add_comment` with any new information instead. Skip this if it's in Backlog, since you can't comment there.
+2. **Raise:** `raise_bug` with:
+   - `summary`, `steps_to_reproduce`, `expected`, `actual`, and `location` (file:line), where known.
+   - `severity`: be honest; urgent means data loss, a security issue, or a broken main path.
+   - `tags` for area (e.g. `auth`, `ui`). Bugs are always tagged `bug` automatically.
+   - `found_while_task_id`: your current task.
+3. **Then:**
+   - **Autofix bugs off (the default):** the bug stays in Bugs until a human moves it to Backlog or To do. Carry on with your task; don't fix the bug. The exception is a bug that is part of your task or blocks it: raise it, fix it as part of the task, and mention both in your summary.
+   - **Autofix bugs on:** you route the bug yourself, as you see fit:
+     - `column: "in_progress"`: fix it now. It's claimed by you; submit it for review like a task.
+     - `column: "todo"`: a real bug to fix later, in the queue.
+     - `column: "decisions"`, with `options` and `recommendation`: how to fix it is the human's call.
+     - For bugs already sitting in Bugs, use `triage_bug(id, to)`.
+
+Not bugs: style preferences, refactor opportunities, missing features. Those go in your review summary as follow-ups.
+
+## Workflow 3: Decisions
 
 Raise a decision whenever **the choice belongs to the user** rather than being an implementation detail you can reasonably make. Typical triggers:
 
-- Product or UX behaviour that isn't specified ("what should happen when…").
-- Architecture, data model, or public API shape with lasting consequences.
-- Adding a dependency, service, or paid resource.
-- Anything destructive or hard to reverse: data migrations, deleting files or data, force-pushes, changing a schema in place.
-- Scope changes: the task turns out much bigger or different than described.
+- Unspecified product or UX behaviour ("what should happen when…").
+- Architecture, data model or public API shape with lasting consequences.
+- Adding a dependency, service or paid resource.
+- Anything destructive or hard to reverse: data migrations, deleting data or files, force-pushes, schema changes.
+- Scope changes: the task is much bigger or different than described.
 - Requirements that conflict with each other or with existing behaviour.
 
-How to raise one:
+Choices you make yourself, without raising: naming, internal structure, which existing utility to use, test layout, and anything else that's easy to change later and that a reviewer wouldn't object to.
 
-- `question`: one clear question.
-- `context`: what prompted it, constraints, and the trade-off of each option, so the user can answer without reading code.
-- `options`: 2–4 concrete, mutually exclusive choices.
-- `recommendation`: the option you'd pick and why, quoting the option text exactly.
-- `blocking_task_id`: the task that can't proceed without the answer.
-
-After raising it:
-
-- Don't implement any of the options speculatively.
-- Continue with parts of the task that don't depend on the answer, or other work. If nothing useful remains, comment on the blocked task, leave it in In progress, and tell the user in chat that a decision is waiting (give its number).
-- In an interactive session you may also ask the question in chat, but always record it on the board too, so the answer is captured.
-- When you next start, `get_decisions` shows the answer (section 1).
-
-Decisions you can make yourself without raising: naming, internal structure, which existing utility to use, test layout, and other choices that are easy to change later and that a reviewer wouldn't object to.
-
-## 6. Finishing a task
-
-1. Verify the work: run the tests, typecheck, or exercise the change.
-2. `move_task(id, "review", note)` where the note covers:
-   - **What changed** (files/areas).
-   - **How it was verified** (commands run and their results; say plainly if something wasn't tested).
-   - **Bugs raised or fixed** (by number).
-   - **Follow-ups** created (by number).
-3. Never move tasks to Done. The user does that after reviewing.
-4. If the user asked you to "work the board", go back to section 2 for the next task. Stop when To do is empty or everything left is blocked on decisions, and summarise in chat.
+1. **Raise:** `raise_decision` with:
+   - `question`: one clear question.
+   - `context`: what prompted it, the constraints, and the trade-off of each option, so the user can answer without reading code.
+   - `options`: 2–4 concrete, mutually exclusive choices.
+   - `recommendation`: the option you'd pick and why, quoting the option text exactly.
+   - `blocking_task_id`: the task that can't proceed without the answer.
+2. **Don't implement any option speculatively.** Do work that doesn't depend on the answer. If nothing useful remains, comment on the blocked task, leave it in progress, and tell the user in chat that decision #N is waiting.
+3. **When it's answered on the board,** a human moves it to To do (act on it) or Backlog (parked). You pick it up as in "Start of session", step 3.
+4. **Decisions from chat.** In an interactive session, you may also ask the question in chat.
+   - **Setting on:** if the user answers in chat, call `record_decision(id, answer, user_quote, then)` straight away. `user_quote` is their actual words. `then: "in_progress"` keeps it claimed so you act on it now; use `"todo"` to queue it. If the decision came up in chat before you'd raised it, `raise_decision` first and then `record_decision`, so the board still has the record.
+   - **Setting off:** tell the user it's recorded as decision #N on the board and ask them to answer it there. Don't act on a chat answer until the board shows it answered.
+   - **Either way, never infer an answer** from silence or ambiguity, or from something the user said about a different question.

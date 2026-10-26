@@ -17,6 +17,9 @@ const COLUMNS = ['bugs', 'decisions', 'backlog', 'todo', 'in_progress', 'review'
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
 // A task keeps its kind after it leaves its intake column, so answered decisions stay findable.
 const KIND_FOR_COLUMN = { bugs: 'bug', decisions: 'decision' };
+const KINDS = ['task', 'bug', 'decision'];
+// Per-project switches, set by humans in the UI, that loosen the bug and decision workflows for Claude.
+const DEFAULT_SETTINGS = { autofixBugs: false, chatDecisions: false };
 const PRIORITY_RANK = { urgent: 0, high: 1, medium: 2, low: 3 };
 
 // ---------- storage ----------
@@ -35,6 +38,7 @@ function load() {
   if (!data.projects.length) {
     data.projects.push({ id: data.nextProjectId++, name: 'General', paths: [], createdAt: new Date().toISOString() });
   }
+  for (const p of data.projects) p.settings = { ...DEFAULT_SETTINGS, ...p.settings };
   for (const t of data.tasks) {
     t.projectId ??= data.projects[0].id;
     t.kind ??= 'task';
@@ -91,14 +95,116 @@ function nextOrder(projectId, column) {
   return orders.length ? Math.max(...orders) + 1 : 0;
 }
 
-function createTask(input) {
+// ---------- agent policy ----------
+// Requests from Claude (via the MCP server) carry an X-Kanban-Agent header naming the agent ("actor").
+// The UI sends none: humans can do anything. Claude is held to the three workflows:
+//   Tasks:     humans release work backlog → todo; Claude claims todo → in_progress (a lock) → review.
+//   Bugs:      Claude raises into bugs; humans triage to backlog/todo. "Autofix bugs" lets Claude route them itself.
+//   Decisions: Claude raises into decisions; humans answer and route to backlog/todo.
+//              "Decisions from chat" lets Claude record an answer the user gave in chat.
+// Claude never touches backlog, and never moves anything to done.
+
+const deny = (message) => {
+  throw new HttpError(403, message);
+};
+
+const settingsOf = (projectId) => findProject(projectId).settings;
+const createdBy = (task) => task.activity[0]?.author;
+
+function guardTask(actor, task) {
+  if (task.column === 'backlog') deny(`#${task.id} is in backlog. Backlog belongs to humans; Claude never changes it.`);
+  if (task.column === 'in_progress' && task.assignee && task.assignee !== actor) {
+    deny(`#${task.id} is locked: in progress by ${task.assignee}.`);
+  }
+}
+
+function checkAgentMove(actor, task, to, note) {
+  const from = task.column;
+  if (to === from) return;
+  if (to === 'backlog') deny('Claude never moves tasks into backlog; humans decide what goes there.');
+  if (to === 'done') deny('Only humans move tasks to done. Move finished work to review.');
+  if (from === 'decisions') {
+    deny(`#${task.id} is an open decision; a human answers it on the board` +
+      (settingsOf(task.projectId).chatDecisions ? ', or record their chat answer with record_decision.' : '.'));
+  }
+  if (from === 'bugs') {
+    if (!settingsOf(task.projectId).autofixBugs) {
+      deny(`#${task.id} is awaiting triage; a human moves bugs to backlog or todo. ("Autofix bugs" is off for this project.)`);
+    }
+    if (to === 'todo' || to === 'in_progress') return;
+    deny(`With autofix, bugs can move to todo or in_progress, not ${to}.`);
+  }
+  if (from === 'todo' && to === 'in_progress') return;
+  if (from === 'in_progress' && (to === 'review' || to === 'todo')) {
+    if (task.assignee !== actor) deny(`#${task.id} is not claimed by ${actor}.`);
+    if (!note) {
+      deny(to === 'review'
+        ? 'Moving to review needs a note: what changed, how it was verified, bugs raised, follow-ups.'
+        : 'Releasing a task back to todo needs a note explaining why.');
+    }
+    return;
+  }
+  deny(`Claude can't move tasks from ${from} to ${to}. Allowed: todo → in_progress (claim), ` +
+    'in_progress → review (with a note), in_progress → todo (release, with a note).');
+}
+
+const AGENT_EDITABLE = ['title', 'description', 'priority', 'tags', 'options', 'recommendation'];
+
+// Validate and adjust an update coming from Claude. Assignment follows the move: claiming locks, releasing unlocks.
+function agentUpdate(actor, task, input) {
+  guardTask(actor, task);
+  const fields = Object.keys(input).filter((k) => input[k] !== undefined && !['author', 'note', 'column'].includes(k));
+  const bad = fields.filter((k) => !AGENT_EDITABLE.includes(k));
+  if (bad.length) deny(`Claude can't change ${bad.join(', ')}.`);
+  if (fields.length) {
+    if (task.column === 'review' || task.column === 'done') deny(`#${task.id} is in ${task.column}, waiting on a human.`);
+    if (task.column === 'decisions' && createdBy(task) !== actor) deny(`#${task.id} is a decision raised by someone else.`);
+    if (task.column === 'todo') deny(`Claim #${task.id} before editing it.`);
+  }
+  if (input.column !== undefined && input.column !== task.column) {
+    checkAgentMove(actor, task, input.column, input.note);
+    if (input.column === 'in_progress') input.assignee = actor;
+    if (input.column === 'todo') input.assignee = null;
+  }
+  return input;
+}
+
+function agentCreate(actor, input, kind, column) {
+  if (column === 'backlog') deny('Claude never adds to backlog; humans decide what work is released.');
+  if (column === 'review' || column === 'done') deny(`New items cannot start in ${column}.`);
+  const settings = settingsOf(input.projectId);
+  if (kind === 'task') {
+    const parent = input.relatedTaskId && board.tasks.find((t) => t.id === Number(input.relatedTaskId));
+    if (column !== 'todo' || !parent || parent.column !== 'in_progress' || parent.assignee !== actor) {
+      deny('Claude does not release new work; humans do, via backlog → todo. You can only split a task you have in ' +
+        'progress into subtasks (in todo, with its id as the parent). Put other follow-ups in your review note, ' +
+        'or raise a decision if a human needs to choose.');
+    }
+  }
+  if (kind === 'bug' && column !== 'bugs' && !settings.autofixBugs) {
+    deny('Bugs go to the bugs column for human triage ("Autofix bugs" is off for this project).');
+  }
+  if (kind === 'decision' && column !== 'decisions') deny('Decisions are raised into the decisions column.');
+  if (column === 'in_progress') input.assignee = actor;
+}
+
+// ---------- tasks ----------
+
+function createTask(input, actor) {
   if (!input.title) throw new HttpError(400, 'title is required');
   if (input.projectId === undefined) throw new HttpError(400, 'projectId is required');
   validate(input);
-  const column = input.column || 'todo';
+  let column = input.column || 'todo';
   const projectId = Number(input.projectId);
-  const kind = KIND_FOR_COLUMN[column] || 'task';
+  // Kind comes from the intake column, or is given explicitly (e.g. an autofixed bug created straight in todo).
+  let kind = KIND_FOR_COLUMN[column] || input.kind || 'task';
+  if (!KINDS.includes(kind)) throw new HttpError(400, `kind must be one of: ${KINDS.join(', ')}`);
+  const extraTags = [];
+  if (input.kind === 'bug' && column === 'decisions') extraTags.push('bug'); // a bug that needs a human call
+  if (actor) agentCreate(actor, input, input.kind === 'bug' && column === 'decisions' ? 'bug' : kind, column);
+  const author = actor || input.author;
   const related = input.relatedTaskId ? findTask(input.relatedTaskId) : null;
+  const tags = [...new Set([...(kind === 'task' ? [] : [kind]), ...extraTags, ...(Array.isArray(input.tags) ? input.tags : [])])];
   const task = {
     id: board.nextId++,
     projectId,
@@ -108,7 +214,7 @@ function createTask(input) {
     column,
     priority: input.priority || 'medium',
     assignee: input.assignee || null,
-    tags: Array.isArray(input.tags) ? input.tags : [],
+    tags,
     order: nextOrder(projectId, column),
     relatedTaskId: related?.id ?? null,
     createdAt: now(),
@@ -121,10 +227,10 @@ function createTask(input) {
     task.answer = null;
     task.answeredAt = null;
   }
-  addActivity(task, input.author, `Created in ${column}`, 'event');
+  addActivity(task, author, `Created in ${column}`, 'event');
   if (related) {
-    const what = kind === 'decision' ? 'Waiting on decision' : kind === 'bug' ? 'Bug raised' : 'Related task created';
-    addActivity(related, input.author, `${what} #${task.id}: ${task.title}`, 'event');
+    const what = { decision: 'Waiting on decision', bug: 'Bug raised', task: 'Subtask created' }[kind];
+    addActivity(related, author, `${what} #${task.id}: ${task.title}`, 'event');
     related.updatedAt = now();
   }
   board.tasks.push(task);
@@ -132,16 +238,30 @@ function createTask(input) {
   return task;
 }
 
-// The user answers a decision: record the answer, file it in done, and tell the task it was blocking.
-function decideTask(id, { answer, author }) {
+// Answer a decision and route it on. Humans send it to todo or backlog. Claude may record an answer the user
+// gave in chat (when the project allows it), quoting them, and send it to todo or keep working on it.
+function decideTask(id, { answer, column = 'todo', userQuote, author }, actor) {
   if (!answer || !String(answer).trim()) throw new HttpError(400, 'answer is required');
   const task = findTask(id);
   if (task.kind !== 'decision') throw new HttpError(400, `Task ${id} is not a decision`);
   if (task.answer) throw new HttpError(409, `Decision ${id} was already answered: ${task.answer}`);
+  if (task.column !== 'decisions') throw new HttpError(400, `Decision ${id} is not in the decisions column`);
+  let note = `Decided: ${String(answer).trim()}`;
+  if (actor) {
+    if (!settingsOf(task.projectId).chatDecisions) {
+      deny('Only humans answer decisions on the board ("Decisions from chat" is off for this project).');
+    }
+    if (!userQuote || !String(userQuote).trim()) deny('Recording a chat decision needs the user\'s own words (userQuote).');
+    if (!['todo', 'in_progress'].includes(column)) deny('A chat-answered decision goes to todo or in_progress.');
+    author = `user (in chat, recorded by ${actor})`;
+    note += `\n> ${String(userQuote).trim()}`;
+  } else if (!['todo', 'backlog'].includes(column)) {
+    throw new HttpError(400, 'An answered decision goes to todo or backlog');
+  }
   task.answer = String(answer).trim();
   task.answeredAt = now();
-  addActivity(task, author, `Decided: ${task.answer}`, 'comment');
-  updateTask(task.id, { column: 'done', author });
+  addActivity(task, author, note, 'comment');
+  updateTask(task.id, { column, assignee: column === 'in_progress' ? actor : null, author: actor || author });
   if (task.relatedTaskId) {
     const related = board.tasks.find((t) => t.id === task.relatedTaskId);
     if (related) {
@@ -155,9 +275,11 @@ function decideTask(id, { answer, author }) {
 
 const EDITABLE = ['title', 'description', 'column', 'priority', 'assignee', 'tags', 'order', 'projectId', 'options', 'recommendation'];
 
-function updateTask(id, input) {
+function updateTask(id, input, actor) {
   const task = findTask(id);
   validate(input);
+  if (actor) input = agentUpdate(actor, task, { ...input });
+  const author = actor || input.author;
   if (input.projectId !== undefined) input = { ...input, projectId: Number(input.projectId) };
   const changes = [];
   for (const key of EDITABLE) {
@@ -179,6 +301,7 @@ function updateTask(id, input) {
   const intakeKind = KIND_FOR_COLUMN[task.column];
   if (intakeKind && task.kind !== intakeKind) {
     task.kind = intakeKind;
+    if (!task.tags.includes(intakeKind)) task.tags.push(intakeKind);
     if (intakeKind === 'decision') {
       task.options ??= [];
       task.recommendation ??= null;
@@ -189,40 +312,63 @@ function updateTask(id, input) {
   // A column or project change lands the task at the end of its new list unless an order was given.
   const relocated = changes.some((c) => c.startsWith('Moved'));
   if (relocated && input.order === undefined) task.order = nextOrder(task.projectId, task.column);
-  if (changes.length || input.order !== undefined) {
+  if (input.note) addActivity(task, author, String(input.note));
+  if (changes.length || input.order !== undefined || input.note) {
     task.updatedAt = now();
-    if (changes.length) addActivity(task, input.author, changes.join('; '), 'event');
+    if (changes.length) addActivity(task, author, changes.join('; '), 'event');
     save();
   }
   return task;
 }
 
-function deleteTask(id) {
+function deleteTask(id, actor) {
   const task = findTask(id);
+  if (actor) {
+    guardTask(actor, task);
+    if (createdBy(task) !== actor) deny(`#${task.id} was not created by ${actor}; ask a human to delete it.`);
+  }
   board.tasks = board.tasks.filter((t) => t !== task);
   save();
   return { deleted: task.id };
 }
 
-function commentTask(id, { text, author }) {
+function commentTask(id, { text, author }, actor) {
   if (!text) throw new HttpError(400, 'text is required');
   const task = findTask(id);
-  addActivity(task, author, text);
+  if (actor && task.column === 'backlog') deny(`#${task.id} is in backlog. Backlog belongs to humans; Claude never changes it.`);
+  addActivity(task, actor || author, text);
   task.updatedAt = now();
   save();
   return task;
 }
 
-// Atomically take the highest-priority, oldest unassigned task from a project's column and start it.
-function claimNext({ assignee, projectId, column = 'todo', tag }) {
+// Atomically take a task and start it: a specific one (taskId) or the highest-priority, oldest unassigned
+// one in a project's column. Claude may claim from todo, or from bugs when "Autofix bugs" is on.
+function claimNext({ assignee, projectId, column = 'todo', tag, taskId }, actor) {
+  assignee = actor || assignee;
   if (!assignee) throw new HttpError(400, 'assignee is required');
-  if (projectId === undefined) throw new HttpError(400, 'projectId is required');
-  const pid = findProject(projectId).id;
-  const candidates = board.tasks
-    .filter((t) => t.projectId === pid && t.column === column && !t.assignee && (!tag || t.tags.includes(tag)))
-    .sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.order - b.order);
-  if (!candidates.length) return null;
-  return updateTask(candidates[0].id, { column: 'in_progress', assignee, author: assignee });
+  let task;
+  if (taskId !== undefined) {
+    task = findTask(taskId);
+    column = task.column;
+    if (task.assignee && task.assignee !== assignee) deny(`#${task.id} is already claimed by ${task.assignee}.`);
+  } else if (projectId === undefined) {
+    throw new HttpError(400, 'projectId or taskId is required');
+  }
+  const pid = task ? task.projectId : findProject(projectId).id;
+  if (actor) {
+    const allowed = ['todo', ...(settingsOf(pid).autofixBugs ? ['bugs'] : [])];
+    if (!allowed.includes(column)) {
+      deny(`Claude can only claim from ${allowed.join(' or ')}${column === 'bugs' ? ' ("Autofix bugs" is off for this project)' : ''}.`);
+    }
+  }
+  if (!task) {
+    [task] = board.tasks
+      .filter((t) => t.projectId === pid && t.column === column && !t.assignee && (!tag || t.tags.includes(tag)))
+      .sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.order - b.order);
+    if (!task) return null;
+  }
+  return updateTask(task.id, { column: 'in_progress', assignee, author: assignee });
 }
 
 function listTasks(query) {
@@ -283,14 +429,25 @@ function createProject({ name, paths = [] }) {
   checkName(name);
   const normalised = [...new Set(paths.map(normPath))];
   checkPaths(normalised);
-  const project = { id: board.nextProjectId++, name: String(name).trim(), paths: normalised, createdAt: now() };
+  const project = {
+    id: board.nextProjectId++,
+    name: String(name).trim(),
+    paths: normalised,
+    settings: { ...DEFAULT_SETTINGS },
+    createdAt: now(),
+  };
   board.projects.push(project);
   save();
   return withCounts(project);
 }
 
-function updateProject(id, { name, paths }) {
+function updateProject(id, { name, paths, settings }) {
   const project = findProject(id);
+  if (settings !== undefined) {
+    const unknown = Object.keys(settings).filter((k) => !(k in DEFAULT_SETTINGS));
+    if (unknown.length) throw new HttpError(400, `Unknown settings: ${unknown.join(', ')}`);
+    project.settings = { ...project.settings, ...Object.fromEntries(Object.entries(settings).map(([k, v]) => [k, Boolean(v)])) };
+  }
   if (name !== undefined) {
     checkName(name, project.id);
     project.name = String(name).trim();
@@ -401,6 +558,8 @@ async function handle(req, res) {
   const parts = url.pathname.split('/').filter(Boolean); // e.g. ['api','tasks','3','comments']
   const method = req.method;
   const query = Object.fromEntries(url.searchParams);
+  // Set by the MCP server on every request Claude makes; absent for the UI. See "agent policy".
+  const actor = req.headers["x-kanban-agent"] || null;
 
   if (method === 'GET' && STATIC[url.pathname]) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -418,7 +577,7 @@ async function handle(req, res) {
     });
   }
   if (parts[1] === 'claim' && method === 'POST') {
-    const task = claimNext(await readBody(req));
+    const task = claimNext(await readBody(req), actor);
     return send(res, 200, { task });
   }
   if (parts[1] === 'claude-projects' && method === 'GET') return send(res, 200, claudeProjects());
@@ -430,6 +589,7 @@ async function handle(req, res) {
     if (id && parts[3] === 'paths' && method === 'POST') return send(res, 200, linkPath(id, await readBody(req)));
     if (id && !parts[3]) {
       if (method === 'GET') return send(res, 200, withCounts(findProject(id)));
+      if (actor && method !== 'GET') deny('Project settings are changed by humans in the board UI.');
       if (method === 'PATCH') return send(res, 200, updateProject(id, await readBody(req)));
       if (method === 'DELETE') return send(res, 200, deleteProject(id));
     }
@@ -437,15 +597,15 @@ async function handle(req, res) {
   if (parts[1] === 'tasks') {
     const id = parts[2];
     if (!id && method === 'GET') return send(res, 200, listTasks(query));
-    if (!id && method === 'POST') return send(res, 201, createTask(await readBody(req)));
+    if (!id && method === 'POST') return send(res, 201, createTask(await readBody(req), actor));
     if (id && parts[3] === 'comments' && method === 'POST') {
-      return send(res, 201, commentTask(id, await readBody(req)));
+      return send(res, 201, commentTask(id, await readBody(req), actor));
     }
-    if (id && parts[3] === 'decide' && method === 'POST') return send(res, 200, decideTask(id, await readBody(req)));
+    if (id && parts[3] === 'decide' && method === 'POST') return send(res, 200, decideTask(id, await readBody(req), actor));
     if (id && !parts[3]) {
       if (method === 'GET') return send(res, 200, findTask(id));
-      if (method === 'PATCH') return send(res, 200, updateTask(id, await readBody(req)));
-      if (method === 'DELETE') return send(res, 200, deleteTask(id));
+      if (method === 'PATCH') return send(res, 200, updateTask(id, await readBody(req), actor));
+      if (method === 'DELETE') return send(res, 200, deleteTask(id, actor));
     }
   }
   send(res, 404, { error: 'Not found' });

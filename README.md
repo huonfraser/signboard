@@ -13,14 +13,35 @@ Claude Code ─┘    via MCP (mcp.js, stdio)
 - **Columns:** `bugs` · `decisions` · `backlog` → `todo` → `in_progress` → `review` → `done`
 - **Priorities:** `low`, `medium`, `high`, `urgent`
 
-## Bugs and decisions
+## Workflows
 
-Two intake columns where Claude reports back to you:
+```
+            humans                     Claude                     humans
+Backlog ───────────▶ To do ──claim──▶ In progress ──submit──▶ Review ───────▶ Done
+                                 (locked to Claude)
 
-- **🐞 Bugs:** Claude raises a bug (`raise_bug`) whenever it finds a defect, including ones outside its current task, with steps to reproduce, expected and actual behaviour, and the file location. Out-of-scope bugs are recorded, not silently fixed. Triage them by dragging to To do, or tell Claude to "fix the bugs".
-- **❓ Decisions:** when a choice belongs to you (unspecified behaviour, architecture or dependencies, anything destructive, scope changes), Claude raises a decision (`raise_decision`) with options and a recommendation instead of guessing. The blocked task gets a comment pointing at it. Open the card and click an option, or type your own answer. The decision files itself in Done, the blocked task is told the answer, and Claude picks it up with `get_decisions` next session. The header badge counts decisions waiting on you across all projects.
+Claude finds a bug        ──raise_bug──────▶ Bugs      ──human triage──▶ Backlog / To do
+Claude needs a human call ──raise_decision─▶ Decisions ──human answer──▶ Backlog / To do
+```
 
-Cards keep their kind after leaving these columns, and dragging a card into Bugs or Decisions turns it into that kind.
+**1. Tasks.**
+- **Release:** Backlog belongs to humans. You decide what work Claude can do by moving it to To do.
+- **Claim:** Claude claims from To do, either the next one by priority, a specific one, or by polling with `wait_for_task`. Claiming moves the task to In progress and locks it to that agent, so no other session can edit or move it.
+- **Finish:** Claude submits to Review with a summary of what changed, how it was verified, and follow-ups. You move it to Done.
+- **Hand back:** Claude can release a task to To do with a reason.
+- **New work:** Claude can't add work of its own. It can only split a task it has in progress into subtasks. Other ideas go in the review summary.
+
+**2. Bugs.**
+- **Raising:** when Claude finds a bug, it raises it in 🐞 Bugs, tagged `bug` plus any area tags. Use the tag filter in the header to see them.
+- **Triage:** you move bugs to Backlog or To do. Claude doesn't fix out-of-scope bugs on its own.
+- **⚡ Autofix bugs** (project setting): Claude routes bugs itself, to To do, to In progress to fix them now, or to Decisions when how to fix it is your call.
+
+**3. Decisions.**
+- **Raising:** when a choice is yours, Claude raises it in ❓ Decisions with options and a recommendation instead of guessing. That covers unspecified behaviour, architecture or dependencies, anything destructive, and scope changes. The blocked task gets a note.
+- **Answering:** open the card, click an option or type your own, and choose where it goes: To do (Claude acts on it) or Backlog (parked). The header badge counts decisions waiting on you across projects.
+- **💬 Decisions from chat** (project setting): when you answer in a Claude Code chat, Claude records your answer on the board, quoting your words, and carries on without waiting.
+
+Turn the two settings on per project in ☰ → ⚙. Cards keep their kind (task, bug, decision) as they move. Dragging a card into Bugs or Decisions turns it into that kind.
 
 ## Projects and Claude Code folders
 
@@ -59,32 +80,41 @@ The board server must be running (`npm start`); the MCP server is a thin client 
 
 | Tool | What it does |
 | --- | --- |
-| `current_project` | Which project this session is working in |
-| `list_projects` | All projects with linked folders and task counts |
-| `link_project` | Link the current (or a given) folder to an existing project, or create one |
-| `list_tasks` | Tasks in the current project (or `all_projects`), filter by column / assignee / tag / text |
-| `get_task` | Full task with description and activity log |
-| `create_task` | Add a task to the current project (subtasks, follow-ups) |
-| `update_task` | Change title, description, column, priority, assignee, tags, or project |
-| `move_task` | Move to a column with a note (required for review) |
-| `add_comment` | Progress updates, findings, questions for you |
-| `claim_next_task` | Take the current project's top unassigned task (priority, then board order) from To do, or Bugs, assign it and move it to `in_progress` |
-| `raise_bug` | Record a bug in Bugs with repro steps, expected/actual, location, severity |
-| `raise_decision` | Ask you to decide: question, context, 2–6 options, recommendation, blocking task |
-| `get_decisions` | Open / answered decisions with your answers |
+| `current_project` | Which project this session is in, its workflow settings and task counts |
+| `list_projects` / `link_project` | See projects; link the current folder to one (or create it) |
+| `list_tasks` / `get_task` | Read the board: filter by column, kind, tag, assignee, text |
+| `claim_next_task` / `claim_task` | Take the top To do task, or a specific one; moves it to In progress, locked |
+| `wait_for_task` | Poll To do until work is released, then claim it |
+| `submit_for_review` | In progress → Review, with a required summary |
+| `release_task` | In progress → To do, unlocked, with a reason |
+| `create_subtask` | Split a task you have in progress (the only way Claude adds work) |
+| `update_task` | Edit title, description, priority or tags of your claimed task, or of a bug or decision you raised |
+| `add_comment` | Progress notes and findings (not on Backlog) |
+| `raise_bug` | Bug with repro, expected/actual, location, severity, tags → Bugs (or routed, with autofix) |
+| `triage_bug` | Autofix only: Bugs → To do / In progress |
+| `raise_decision` | Question, context, options, recommendation, blocking task → Decisions |
+| `record_decision` | Decisions from chat only: record your chat answer, quoting you |
+| `get_decisions` | Open and answered decisions, with where they are now |
 | `delete_task` | Remove a task Claude created in error |
 
-### Workflow guardrails
+### Guardrails
 
-The MCP tools enforce the workflow. Claude can't work around these limits; you can do anything in the UI.
+The server enforces these rules on every request from Claude. The MCP server marks each request with an `X-Kanban-Agent` header, and requests from the UI are unrestricted.
 
-- Claude can't move tasks to Done; you close them after review.
-- Claude can't resolve, move or claim an open decision; only you can answer it.
-- Moving to Review requires a note (what changed, how it was verified, follow-ups).
-- Bugs and decisions can only be created through `raise_bug` and `raise_decision`, so they're always structured.
-- Claude can only delete tasks it created.
+- **Backlog is off-limits.** Claude never creates, edits, moves, claims or comments on Backlog tasks, and never moves anything into Backlog.
+- **No Done.** Claude never moves anything to Done.
+- **Claude's allowed moves:**
+  - To do → In progress (claim)
+  - In progress → Review (with a summary)
+  - In progress → To do (release, with a reason)
+- **Locking.** A task in progress belongs to the agent that claimed it. Other agents can't edit, move or claim it.
+- **No new work.** Claude only creates bugs, decisions, and subtasks of its own in-progress task.
+- **Bugs** stay in Bugs for you unless Autofix bugs is on.
+- **Decisions** are answered only by you, either on the board, or in chat when Decisions from chat is on. A chat answer must quote you.
+- **Settings.** Project settings can only be changed in the UI.
+- **Deleting.** Claude can only delete tasks it created.
 
-The MCP server also sends Claude a short instruction about the workflow whenever it connects.
+The MCP server also gives Claude a short workflow reminder whenever it connects. The skill tells Claude never to call the HTTP API directly. That is an honour-system rule: the server can't tell a hand-written request from a UI request.
 
 ## The kanban skill
 
@@ -109,18 +139,18 @@ Then in any linked project just tell Claude *"work the board"*.
 | GET | `/api/board` | columns, priorities, projects and tasks; `?project=` to scope |
 | GET | `/api/projects` | projects with linked folders and per-column counts |
 | POST | `/api/projects` | `{name, paths?}` |
-| GET/PATCH/DELETE | `/api/projects/:id` | PATCH `{name?, paths?}`; DELETE removes its tasks too |
+| GET/PATCH/DELETE | `/api/projects/:id` | PATCH `{name?, paths?, settings?: {autofixBugs, chatDecisions}}`; DELETE removes its tasks too |
 | POST | `/api/projects/:id/paths` | `{path}`: link one more folder |
 | GET | `/api/projects/resolve` | `?path=`: project linked to a folder (or 404) |
 | GET | `/api/claude-projects` | folders Claude Code has been used in, newest first |
 | GET | `/api/tasks` | `?project=&column=&kind=&assignee=&tag=&q=` (`kind`: task, bug, decision) |
 | POST | `/api/tasks` | `{title, projectId, description?, column?, priority?, assignee?, tags?, relatedTaskId?, author?}`; decisions also take `options?, recommendation?` |
 | GET | `/api/tasks/:id` | |
-| PATCH | `/api/tasks/:id` | any editable field, plus `author?` |
+| PATCH | `/api/tasks/:id` | any editable field, plus `note?` (added as a comment) and `author?` |
 | DELETE | `/api/tasks/:id` | |
 | POST | `/api/tasks/:id/comments` | `{text, author?}` |
-| POST | `/api/tasks/:id/decide` | `{answer, author?}`: answer a decision, move it to done, notify the blocked task |
-| POST | `/api/claim` | `{assignee, projectId, column?, tag?}` → `{task}` or `{task: null}` |
+| POST | `/api/tasks/:id/decide` | `{answer, column?}`: answer a decision and route it (humans: `todo` / `backlog`); notifies the blocked task. Agents also send `userQuote` |
+| POST | `/api/claim` | `{assignee, projectId, column?, tag?}` or `{assignee, taskId}` → `{task}` or `{task: null}` |
 
 Boards created before projects existed are migrated on startup: all their tasks move into a "General" project.
 

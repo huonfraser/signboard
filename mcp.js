@@ -2,9 +2,13 @@
 // MCP server (stdio) exposing the kanban board to Claude Code.
 // Thin client over the REST API in server.js, so the board UI and Claude always share state.
 //
-// Tools are scoped to a kanban project. The project is resolved per call from, in order:
-// an explicit `project` argument, KANBAN_PROJECT (id or name), or the folder Claude Code was
-// started in (CLAUDE_PROJECT_DIR or the process cwd) matched against each project's linked folders.
+// Every request carries X-Kanban-Agent, so the server applies its agent policy (see "agent policy" in
+// server.js): Claude claims todo → in_progress → review, raises bugs and decisions, and never touches backlog.
+// The tools below map one-to-one onto the moves that policy allows.
+//
+// Tools are scoped to a kanban project, resolved per call from, in order: an explicit `project` argument,
+// KANBAN_PROJECT (id or name), or the folder Claude Code was started in (CLAUDE_PROJECT_DIR or the process
+// cwd) matched against each project's linked folders.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -12,6 +16,7 @@ import { z } from 'zod';
 const BASE = process.env.KANBAN_URL || `http://localhost:${process.env.KANBAN_PORT || 4477}`;
 const AGENT = process.env.KANBAN_AGENT || 'claude';
 const WORKDIR = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+const POLL_MS = 5000;
 
 const Column = z.enum(['bugs', 'decisions', 'backlog', 'todo', 'in_progress', 'review', 'done']);
 const Priority = z.enum(['low', 'medium', 'high', 'urgent']);
@@ -22,11 +27,11 @@ async function api(method, path, body) {
   try {
     res = await fetch(BASE + path, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Kanban-Agent': AGENT },
       body: body && JSON.stringify(body),
     });
   } catch {
-    throw new Error(`Kanban server not reachable at ${BASE}. Start it with: npm start`);
+    throw new Error(`Kanban server not reachable at ${BASE}. Ask the user to start it (npm start in the kanban repo).`);
   }
   const data = await res.json();
   if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
@@ -55,18 +60,6 @@ async function currentProject(ref) {
   }
 }
 
-// Workflow guardrails. The UI (the user) can do anything; Claude, through these tools, cannot:
-// close work (done is the user's call after review), resolve decisions, or skip the review summary.
-function checkMove(task, column, note) {
-  if (column === task.column) return;
-  if (column === 'done') throw new Error('Only the user moves tasks to done. Move it to review with a summary note instead.');
-  if (task.kind === 'decision' && !task.answer) {
-    throw new Error(`#${task.id} is an open decision; only the user can resolve it (in the board UI). Use get_decisions to check for answers.`);
-  }
-  if (column === 'decisions') throw new Error('Use raise_decision to ask the user something; do not move tasks into decisions.');
-  if (column === 'review' && !note) throw new Error('Moving to review needs a note: what changed, how it was tested, any follow-ups.');
-}
-
 const KIND_MARK = { bug: '🐞 ', decision: '❓ ', task: '' };
 
 // Compact one-line summary for list views; full JSON for single-task views.
@@ -78,9 +71,13 @@ const line = (t, projectName) =>
   (projectName ? `  — ${projectName}` : '');
 
 const counts = (p) => Object.entries(p.counts).filter(([, n]) => n).map(([c, n]) => `${c}:${n}`).join(' ') || 'empty';
+const settingsText = (s) =>
+  `Autofix bugs: ${s.autofixBugs ? 'ON (you may route bugs to todo/in_progress/decisions yourself)' : 'off (bugs wait in bugs for human triage)'}\n` +
+  `Decisions from chat: ${s.chatDecisions ? 'ON (record_decision may record answers the user gives in chat)' : 'off (only humans answer decisions, on the board)'}`;
 
 const text = (s) => ({ content: [{ type: 'text', text: s }] });
 const json = (o) => text(JSON.stringify(o, null, 2));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function tool(name, description, inputSchema, handler) {
   server.registerTool(name, { description, inputSchema }, async (args) => {
@@ -93,21 +90,23 @@ function tool(name, description, inputSchema, handler) {
 }
 
 const server = new McpServer(
-  { name: 'kanban', version: '0.3.0' },
+  { name: 'kanban', version: '0.4.0' },
   {
     instructions:
-      'Kanban board for this project. Follow the kanban skill workflow: claim or resume a task before starting work; ' +
-      'raise_bug for any bug you find (do not silently fix out-of-scope bugs); raise_decision whenever a choice belongs ' +
-      'to the user instead of guessing; check get_decisions for answers; finish by moving to review with a summary. ' +
-      'Never move tasks to done.',
+      'Kanban board for this project; follow the kanban skill. Work comes only from To do: claim a task (it moves to ' +
+      'in_progress and is locked to you), then submit_for_review with a summary. Never touch Backlog — it is how humans ' +
+      'release work. Raise any bug you find with raise_bug and any choice that belongs to the user with raise_decision ' +
+      'instead of guessing. Never move anything to Done. Do not call the board\'s HTTP API directly; use these tools.',
   },
 );
 
 // ---------- projects ----------
 
-tool('current_project', 'Show which kanban project this Claude Code session is working in, and its task counts.', {}, async () => {
+tool('current_project', 'Show which kanban project this session is working in, its workflow settings, and task counts.', {}, async () => {
   const p = await currentProject();
-  return text(`Project "${p.name}" (id ${p.id})\nLinked folders: ${p.paths.join(', ') || 'none'}\nTasks: ${counts(p)}`);
+  return text(
+    `Project "${p.name}" (id ${p.id})\nLinked folders: ${p.paths.join(', ') || 'none'}\nTasks: ${counts(p)}\n${settingsText(p.settings)}`,
+  );
 });
 
 tool('list_projects', 'List all kanban projects with their linked folders and task counts.', {}, async () => {
@@ -117,7 +116,7 @@ tool('list_projects', 'List all kanban projects with their linked folders and ta
 
 tool(
   'link_project',
-  'Link a folder (default: the current working folder) to a kanban project so future sessions there use its board. ' +
+  'Link a folder (default: the current working folder) to a kanban project so sessions there use its board. ' +
     'Links to an existing project by name or id, or creates a new project with that name. Confirm the project with the user first.',
   {
     project: z.string().describe('Existing project name/id, or the name for a new project'),
@@ -134,7 +133,7 @@ tool(
   },
 );
 
-// ---------- tasks ----------
+// ---------- reading ----------
 
 tool(
   'list_tasks',
@@ -143,13 +142,14 @@ tool(
     project: ProjectRef,
     all_projects: z.boolean().optional().describe('List across every project instead of just the current one'),
     column: Column.optional(),
+    kind: z.enum(['task', 'bug', 'decision']).optional(),
     assignee: z.string().optional(),
     tag: z.string().optional(),
     query: z.string().optional().describe('Text search over title and description'),
   },
-  async ({ project, all_projects, column, assignee, tag, query }) => {
+  async ({ project, all_projects, column, kind, assignee, tag, query }) => {
     const pid = all_projects ? undefined : (await currentProject(project)).id;
-    const params = new URLSearchParams(Object.entries({ project: pid, column, assignee, tag, q: query }).filter(([, v]) => v));
+    const params = new URLSearchParams(Object.entries({ project: pid, column, kind, assignee, tag, q: query }).filter(([, v]) => v));
     const tasks = await api('GET', `/api/tasks?${params}`);
     if (!tasks.length) return text('No matching tasks.');
     const names = all_projects ? Object.fromEntries((await api('GET', '/api/projects')).map((p) => [p.id, p.name])) : {};
@@ -161,35 +161,113 @@ tool('get_task', 'Get full details of a task, including description and activity
   json(await api('GET', `/api/tasks/${id}`)),
 );
 
+// ---------- workflow 1: tasks ----------
+
 tool(
-  'create_task',
-  'Create a new task in the current project. Use this to break work into subtasks or record follow-ups you discover.',
-  {
-    title: z.string(),
-    description: z.string().optional(),
-    column: Column.optional().describe('Defaults to todo'),
-    priority: Priority.optional().describe('Defaults to medium'),
-    assignee: z.string().optional(),
-    tags: z.array(z.string()).optional(),
-    project: ProjectRef,
-  },
-  async ({ project, ...fields }) => {
-    if (fields.column === 'bugs' || fields.column === 'decisions') {
-      throw new Error(`Use ${fields.column === 'bugs' ? 'raise_bug' : 'raise_decision'} instead of create_task for that column.`);
-    }
-    if (fields.column === 'done' || fields.column === 'review') throw new Error(`New tasks cannot start in ${fields.column}.`);
+  'claim_next_task',
+  'Claim the highest-priority unassigned task in To do: moves it to in_progress and locks it to you. ' +
+    'Returns the full task, or a message if To do is empty. (With "Autofix bugs" on you may pass column "bugs".)',
+  { tag: z.string().optional().describe('Only claim tasks with this tag'), column: z.enum(['todo', 'bugs']).optional(), project: ProjectRef },
+  async ({ tag, column, project }) => {
     const p = await currentProject(project);
-    const task = await api('POST', '/api/tasks', { ...fields, projectId: p.id, author: AGENT });
-    return text(`Created ${line(task)} in "${p.name}"`);
+    const { task } = await api('POST', '/api/claim', { projectId: p.id, column, tag });
+    return task ? json(task) : text(`To do is empty in "${p.name}".`);
   },
 );
 
-// ---------- bugs and decisions ----------
+tool(
+  'claim_task',
+  'Claim a specific task from To do by id (e.g. one the user named, or an answered decision): moves it to in_progress and locks it to you.',
+  { id: z.number().int() },
+  async ({ id }) => json((await api('POST', '/api/claim', { taskId: id })).task),
+);
+
+tool(
+  'wait_for_task',
+  'Poll To do until a task is available, then claim it. Use when the board is empty and the user wants you to keep ' +
+    'working the board. Returns the claimed task, or a message if nothing arrived before the timeout (call again to keep waiting).',
+  {
+    timeout_seconds: z.number().int().min(10).max(1800).optional().describe('How long to wait (default 300)'),
+    tag: z.string().optional(),
+    project: ProjectRef,
+  },
+  async ({ timeout_seconds = 300, tag, project }) => {
+    const p = await currentProject(project);
+    const deadline = Date.now() + timeout_seconds * 1000;
+    for (;;) {
+      const { task } = await api('POST', '/api/claim', { projectId: p.id, tag });
+      if (task) return json(task);
+      if (Date.now() + POLL_MS > deadline) break;
+      await sleep(POLL_MS);
+    }
+    return text(`No task arrived in To do in "${p.name}" within ${timeout_seconds}s.`);
+  },
+);
+
+tool(
+  'submit_for_review',
+  'Finish a task you have in progress: moves it to Review (humans move it to Done). The summary is required.',
+  {
+    id: z.number().int(),
+    summary: z.string().describe('What changed, how it was verified (commands and results; say if untested), bugs raised/fixed, follow-ups'),
+  },
+  async ({ id, summary }) => text(`Submitted ${line(await api('PATCH', `/api/tasks/${id}`, { column: 'review', note: summary }))}`),
+);
+
+tool(
+  'release_task',
+  'Give a task you claimed back to To do, unlocked, e.g. it cannot be done as described. Explain why.',
+  { id: z.number().int(), reason: z.string() },
+  async ({ id, reason }) => text(`Released ${line(await api('PATCH', `/api/tasks/${id}`, { column: 'todo', note: reason }))}`),
+);
+
+tool(
+  'create_subtask',
+  'Split a task you have in progress into a smaller task in To do. This is the only way you can add work; ' +
+    'other follow-ups go in your review summary, or raise_decision if a human must choose.',
+  {
+    parent_id: z.number().int().describe('The in-progress task you are splitting'),
+    title: z.string(),
+    description: z.string().optional(),
+    priority: Priority.optional(),
+    tags: z.array(z.string()).optional(),
+  },
+  async ({ parent_id, ...fields }) => {
+    const parent = await api('GET', `/api/tasks/${parent_id}`);
+    const task = await api('POST', '/api/tasks', { ...fields, column: 'todo', relatedTaskId: parent_id, projectId: parent.projectId });
+    return text(`Created subtask ${line(task)}`);
+  },
+);
+
+tool(
+  'update_task',
+  'Edit the title, description, priority or tags of a task you have in progress, or of a bug/decision you raised. ' +
+    'Column changes go through claim/submit/release; assignment follows claiming.',
+  {
+    id: z.number().int(),
+    title: z.string().optional(),
+    description: z.string().optional(),
+    priority: Priority.optional(),
+    tags: z.array(z.string()).optional(),
+  },
+  async ({ id, ...fields }) => text(`Updated ${line(await api('PATCH', `/api/tasks/${id}`, fields))}`),
+);
+
+tool(
+  'add_comment',
+  'Comment on a task: progress, findings, questions. (Not allowed on Backlog tasks.)',
+  { id: z.number().int(), text: z.string() },
+  async ({ id, text: body }) => text(`Commented on ${line(await api('POST', `/api/tasks/${id}/comments`, { text: body }))}`),
+);
+
+// ---------- workflow 2: bugs ----------
 
 tool(
   'raise_bug',
-  'Record a bug you found in the Bugs column of the current project. Use this for any defect you notice, including ones outside ' +
-    'your current task, instead of silently fixing or ignoring it. Check list_tasks(column: "bugs") first to avoid duplicates.',
+  'Record a bug you found, tagged "bug". By default it goes to Bugs for a human to triage. Use this for every defect you ' +
+    'notice, including ones outside your current task. Check list_tasks(kind: "bug") first to avoid duplicates. ' +
+    'With "Autofix bugs" on you may route it yourself: todo, in_progress (fix it now; it is claimed by you) or decisions ' +
+    '(a human must choose how to fix it; give options).',
   {
     title: z.string().describe('Short symptom, e.g. "Login fails when email has uppercase letters"'),
     summary: z.string().describe('What is wrong and why it matters'),
@@ -198,10 +276,14 @@ tool(
     actual: z.string().optional(),
     location: z.string().optional().describe('Files / functions / lines involved, e.g. src/auth.ts:42'),
     severity: Priority.optional().describe('low | medium | high | urgent (defaults to medium)'),
+    tags: z.array(z.string()).optional().describe('Extra tags for filtering, e.g. area ("auth", "ui")'),
     found_while_task_id: z.number().int().optional().describe('The task you were working on when you found it'),
+    column: z.enum(['bugs', 'todo', 'in_progress', 'decisions']).optional().describe('Defaults to bugs. Others need "Autofix bugs".'),
+    options: z.array(z.string()).optional().describe('Only for column "decisions": the fix options for the human'),
+    recommendation: z.string().optional().describe('Only for column "decisions"'),
     project: ProjectRef,
   },
-  async ({ title, summary, steps_to_reproduce, expected, actual, location, severity, found_while_task_id, project }) => {
+  async ({ title, summary, steps_to_reproduce, expected, actual, location, severity, tags, found_while_task_id, column = 'bugs', options, recommendation, project }) => {
     const p = await currentProject(project);
     const sections = [
       summary,
@@ -210,36 +292,49 @@ tool(
       actual && `**Actual**\n${actual}`,
       location && `**Location**\n${location}`,
     ].filter(Boolean);
+    if (column === 'decisions' && (!options || options.length < 2)) throw new Error('Routing a bug to decisions needs at least 2 options.');
     const task = await api('POST', '/api/tasks', {
       title,
       description: sections.join('\n\n'),
-      column: 'bugs',
+      kind: 'bug',
+      column,
       priority: severity,
-      tags: ['bug'],
+      tags,
+      options,
+      recommendation,
       relatedTaskId: found_while_task_id,
       projectId: p.id,
-      author: AGENT,
     });
     return text(`Raised bug ${line(task)} in "${p.name}"`);
   },
 );
 
 tool(
+  'triage_bug',
+  'Only with "Autofix bugs" on: move a bug out of Bugs to todo, or to in_progress to fix it now (claims it).',
+  { id: z.number().int(), to: z.enum(['todo', 'in_progress']), note: z.string().optional() },
+  async ({ id, to, note }) => text(`Moved ${line(await api('PATCH', `/api/tasks/${id}`, { column: to, note }))}`),
+);
+
+// ---------- workflow 3: decisions ----------
+
+tool(
   'raise_decision',
-  'Ask the user to make a decision, recorded in the Decisions column. Use this whenever a choice is the user\'s to make ' +
-    '(product behaviour, architecture or dependency choices, scope changes, anything destructive or hard to reverse, ' +
-    'ambiguous requirements) instead of guessing. Give 2-4 concrete options and your recommendation. ' +
-    'Then work on something that does not depend on the answer, or stop and tell the user you are waiting.',
+  'Ask the user to decide, recorded in Decisions. Use whenever a choice is the user\'s to make (unspecified product ' +
+    'behaviour, architecture or dependency choices, scope changes, anything destructive or hard to reverse, ambiguous ' +
+    'or conflicting requirements) instead of guessing. Give 2-4 concrete options and your recommendation. A human answers ' +
+    'it and moves it to To do or Backlog. Meanwhile do unblocked work, or stop and tell the user.',
   {
     question: z.string().describe('The decision, phrased as a question'),
     context: z.string().describe('Background the user needs: what prompted this, constraints, trade-offs of each option'),
     options: z.array(z.string()).min(2).max(6).describe('Concrete, mutually exclusive choices'),
-    recommendation: z.string().optional().describe('Which option you recommend and why'),
+    recommendation: z.string().optional().describe('Which option you recommend and why (quote the option text)'),
     blocking_task_id: z.number().int().optional().describe('Task that cannot proceed until this is decided'),
     priority: Priority.optional().describe('How urgently you need an answer (defaults to medium)'),
+    tags: z.array(z.string()).optional(),
     project: ProjectRef,
   },
-  async ({ question, context, options, recommendation, blocking_task_id, priority, project }) => {
+  async ({ question, context, options, recommendation, blocking_task_id, priority, tags, project }) => {
     const p = await currentProject(project);
     const task = await api('POST', '/api/tasks', {
       title: question,
@@ -248,18 +343,39 @@ tool(
       options,
       recommendation,
       priority,
-      tags: ['decision'],
+      tags,
       relatedTaskId: blocking_task_id,
       projectId: p.id,
-      author: AGENT,
     });
-    return text(`Raised decision ${line(task)} in "${p.name}". The user will answer it on the board; check with get_decisions.`);
+    return text(
+      `Raised decision ${line(task)} in "${p.name}".` +
+        (p.settings.chatDecisions
+          ? ' If the user answers in chat, record it with record_decision.'
+          : ' The user will answer it on the board; check with get_decisions.'),
+    );
+  },
+);
+
+tool(
+  'record_decision',
+  'Only with "Decisions from chat" on: record an answer the user gave you in this chat to an open decision, so the ' +
+    'session is not held up. Quote the user\'s own words. Never infer or invent an answer. Then the decision goes to ' +
+    'in_progress (you act on it now; it is claimed by you) or todo.',
+  {
+    id: z.number().int(),
+    answer: z.string().describe('The decision the user made'),
+    user_quote: z.string().describe('The user\'s words from the chat that state the decision'),
+    then: z.enum(['in_progress', 'todo']).optional().describe('Defaults to in_progress'),
+  },
+  async ({ id, answer, user_quote, then = 'in_progress' }) => {
+    const task = await api('POST', `/api/tasks/${id}/decide`, { answer, userQuote: user_quote, column: then });
+    return text(`Recorded decision ${line(task)}`);
   },
 );
 
 tool(
   'get_decisions',
-  'List decisions in the current project with their answers. Check this at the start of a session and before resuming a blocked task.',
+  'List decisions in the current project with their answers and where they are now. Check at session start and before resuming a blocked task.',
   {
     status: z.enum(['open', 'answered', 'all']).optional().describe('Defaults to all'),
     project: ProjectRef,
@@ -274,7 +390,7 @@ tool(
       decisions
         .map((d) =>
           [
-            `#${d.id} ${d.answer ? 'ANSWERED' : 'OPEN'}: ${d.title}`,
+            `#${d.id} ${d.answer ? 'ANSWERED' : 'OPEN'} [${d.column}${d.assignee ? ` @${d.assignee}` : ''}]: ${d.title}`,
             `  options: ${d.options.map((o) => `"${o}"`).join(', ') || '(none given)'}`,
             d.answer && `  answer: ${d.answer}`,
             d.relatedTaskId && `  blocks task #${d.relatedTaskId}`,
@@ -287,70 +403,7 @@ tool(
   },
 );
 
-tool(
-  'update_task',
-  'Update fields on a task. Only provided fields change. Set assignee to null to unassign. Pass project to move it to another project.',
-  {
-    id: z.number().int(),
-    title: z.string().optional(),
-    description: z.string().optional(),
-    column: Column.optional(),
-    priority: Priority.optional(),
-    assignee: z.string().nullable().optional(),
-    tags: z.array(z.string()).optional(),
-    project: z.string().optional().describe('Project name or id to move the task to'),
-  },
-  async ({ id, project, ...fields }) => {
-    if (fields.column) {
-      // Review needs a summary, which update_task has no field for, so route it through move_task.
-      if (fields.column === 'review') throw new Error('Use move_task with a note to move a task to review.');
-      checkMove(await api('GET', `/api/tasks/${id}`), fields.column);
-    }
-    const projectId = project ? (await findByRef(project)).id : undefined;
-    const task = await api('PATCH', `/api/tasks/${id}`, { ...fields, projectId, author: AGENT });
-    return text(`Updated ${line(task)}`);
-  },
-);
-
-tool(
-  'move_task',
-  'Move a task to another column, leaving a note explaining why (what was done, what is blocking). ' +
-    'A note is required for review. You cannot move tasks to done or resolve decisions; the user does that.',
-  { id: z.number().int(), column: Column, note: z.string().optional() },
-  async ({ id, column, note }) => {
-    checkMove(await api('GET', `/api/tasks/${id}`), column, note);
-    const task = await api('PATCH', `/api/tasks/${id}`, { column, author: AGENT });
-    if (note) await api('POST', `/api/tasks/${id}/comments`, { text: note, author: AGENT });
-    return text(`Moved ${line(task)}`);
-  },
-);
-
-tool(
-  'add_comment',
-  'Add a comment to a task: progress updates, findings, questions for the user, or a summary of changes made.',
-  { id: z.number().int(), text: z.string() },
-  async ({ id, text: body }) => {
-    const task = await api('POST', `/api/tasks/${id}/comments`, { text: body, author: AGENT });
-    return text(`Commented on ${line(task)}`);
-  },
-);
-
-tool(
-  'claim_next_task',
-  'Claim the highest-priority unassigned task in the current project from a column (default todo; use "bugs" when asked to fix bugs): ' +
-    'assigns it to you and moves it to in_progress. Returns the full task, or a message if the queue is empty.',
-  { column: Column.optional(), tag: z.string().optional(), project: ProjectRef },
-  async ({ column, tag, project }) => {
-    if (['decisions', 'review', 'done', 'in_progress'].includes(column)) throw new Error(`Cannot claim from ${column}.`);
-    const p = await currentProject(project);
-    const { task } = await api('POST', '/api/claim', { assignee: AGENT, projectId: p.id, column, tag });
-    return task ? json(task) : text(`No unassigned tasks to claim in "${p.name}".`);
-  },
-);
-
-tool('delete_task', 'Permanently delete a task you created in error (e.g. a duplicate bug). You cannot delete tasks the user created.', { id: z.number().int() }, async ({ id }) => {
-  const task = await api('GET', `/api/tasks/${id}`);
-  if (task.activity[0]?.author !== AGENT) throw new Error(`#${id} was not created by ${AGENT}; ask the user to delete it.`);
+tool('delete_task', 'Permanently delete a task you created in error (e.g. a duplicate bug). You cannot delete tasks others created.', { id: z.number().int() }, async ({ id }) => {
   await api('DELETE', `/api/tasks/${id}`);
   return text(`Deleted task #${id}`);
 });

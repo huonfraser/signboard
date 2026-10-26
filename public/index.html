@@ -19,7 +19,9 @@
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
   header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
-  header h1 { font-size: 18px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header { flex-wrap: wrap; row-gap: 8px; }
+  header h1 { font-size: 18px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 6em; flex: 0 1 auto; }
+  #modes { display: flex; gap: 4px; flex-wrap: wrap; }
   header .spacer { flex: 1; }
   header input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); width: 220px; }
   .icon-btn { background: none; border: none; padding: 6px 8px; border-radius: 6px; font-size: 18px; line-height: 1; color: var(--text); cursor: pointer; }
@@ -45,7 +47,7 @@
   .column[data-column="decisions"] { border-top: 3px solid var(--high); }
   .column[data-column="bugs"] h2 > span:first-child::before { content: "🐞 "; }
   .column[data-column="decisions"] h2 > span:first-child::before { content: "❓ "; }
-  .badge { display: none; padding: 4px 10px; border-radius: 12px; border: none; font-size: 12px; font-weight: 600; cursor: pointer;
+  .badge { display: none; white-space: nowrap; padding: 4px 10px; border-radius: 12px; border: none; font-size: 12px; font-weight: 600; cursor: pointer;
     background: color-mix(in srgb, var(--high) 22%, transparent); color: color-mix(in srgb, var(--high) 70%, var(--text)); }
   .badge.show { display: inline-block; }
   .decision-panel { display: grid; gap: 8px; padding: 12px; border-radius: 8px; background: color-mix(in srgb, var(--high) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--high) 35%, transparent); }
@@ -56,6 +58,15 @@
   .decision-panel .opts button.recommended { border-color: var(--accent); }
   .decision-panel .answer { font-weight: 600; white-space: pre-wrap; }
   .related { font-size: 12px; color: var(--muted); }
+  header select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); font: inherit; font-size: 13px; }
+  .mode { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); white-space: nowrap; }
+  .toggles { display: grid; gap: 10px; }
+  .toggle { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: start; cursor: pointer; }
+  .toggle input { width: auto; margin: 3px 0 0; grid-row: span 2; }
+  .toggle strong { font-size: 13px; }
+  .toggle span { font-size: 12px; color: var(--muted); }
+  .route { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .route select { width: auto; padding: 4px 8px; }
   .related a { color: inherit; }
   .p-low { border-left-color: var(--low); } .p-medium { border-left-color: var(--medium); }
   .p-high { border-left-color: var(--high); } .p-urgent { border-left-color: var(--urgent); }
@@ -85,7 +96,7 @@
 
   dialog { border: none; border-radius: 10px; padding: 0; width: min(640px, 94vw); background: var(--card); color: var(--text); box-shadow: 0 8px 40px rgba(0,0,0,.3); }
   dialog::backdrop { background: rgba(9,30,66,.5); }
-  .modal { padding: 20px; display: grid; gap: 12px; }
+  .modal { padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .modal h3 { margin: 0; font-size: 16px; }
   .modal input, .modal textarea, .modal select { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
   .modal textarea { min-height: 110px; resize: vertical; }
@@ -99,13 +110,13 @@
   .entry .body { white-space: pre-wrap; margin-top: 2px; }
   .actions { display: flex; gap: 8px; justify-content: space-between; }
   .hint { font-size: 12px; color: var(--muted); margin: 0; }
-  .paths { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+  .paths { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .paths li { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--bg); border-radius: 6px; font: 12px ui-monospace, Menlo, monospace; }
-  .paths li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  .paths li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
   .paths .icon-btn { font-size: 13px; padding: 2px 6px; }
   .add-path { display: flex; gap: 8px; }
   .suggestions { display: flex; flex-wrap: wrap; gap: 6px; }
-  .suggestions button { padding: 3px 8px; font: 12px ui-monospace, Menlo, monospace; }
+  .suggestions button { padding: 3px 8px; font: 12px ui-monospace, Menlo, monospace; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   button { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--col); color: var(--text); cursor: pointer; font: inherit; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.danger { color: var(--urgent); }
@@ -116,9 +127,11 @@
 <header>
   <button class="icon-btn" id="menu-btn" aria-label="Projects menu">☰</button>
   <h1 id="project-title">Kanban Vibes</h1>
+  <span id="modes"></span>
   <span class="status" id="status"></span>
   <span class="spacer"></span>
   <button class="badge" id="decision-badge" title="Decisions waiting on you"></button>
+  <select id="tag-filter" aria-label="Filter by tag"><option value="">All tags</option></select>
   <input id="filter" placeholder="Filter tasks…" />
 </header>
 <main class="board" id="board"></main>
@@ -169,6 +182,15 @@
       <button type="button" id="add-path">Link</button>
     </div>
     <datalist id="claude-folders"></datalist>
+    <div class="field"><label>Claude workflow</label></div>
+    <div class="toggles">
+      <label class="toggle"><input type="checkbox" name="autofixBugs" />
+        <strong>Autofix bugs</strong>
+        <span>Claude may route the bugs it finds itself (to To do, In progress or Decisions) and work on them, instead of waiting for you to triage them out of Bugs.</span></label>
+      <label class="toggle"><input type="checkbox" name="chatDecisions" />
+        <strong>Decisions from chat</strong>
+        <span>When you answer a decision in a Claude Code chat, Claude records your answer (quoting you) and carries on, instead of waiting for you to answer on the board.</span></label>
+    </div>
     <div class="field" id="suggest-wrap">
       <label>Recent Claude Code folders</label>
       <div class="suggestions" id="suggestions"></div>
@@ -252,20 +274,28 @@ function render() {
   const all = isAll();
   const project = currentProject();
   $('#project-title').textContent = all ? 'All projects' : project?.name ?? 'Kanban Vibes';
+  const s = !all && project?.settings;
+  $('#modes').innerHTML = s
+    ? [s.autofixBugs && '<span class="mode" title="Claude routes bugs itself">⚡ Autofix bugs</span>',
+       s.chatDecisions && '<span class="mode" title="Claude records decisions you make in chat">💬 Chat decisions</span>'].filter(Boolean).join(' ')
+    : '';
+  renderTagFilter();
   document.title = `${all ? 'All projects' : project?.name ?? ''} · Kanban Vibes`;
   renderMenu();
-  // Answered decisions move to done, so whatever is in the decisions column is waiting on the user.
+  // Answered decisions leave the decisions column, so whatever is in it is waiting on the user.
   const waiting = state.projects.reduce((n, p) => n + (p.counts.decisions || 0), 0);
   const badge = $('#decision-badge');
   badge.textContent = `❓ ${waiting} decision${waiting === 1 ? '' : 's'} waiting`;
   badge.classList.toggle('show', waiting > 0);
 
   const q = $('#filter').value.toLowerCase();
+  const tag = $('#tag-filter').value;
   const board = $('#board');
   board.innerHTML = '';
   for (const col of state.columns) {
     const tasks = state.tasks
       .filter((t) => t.column === col)
+      .filter((t) => !tag || t.tags.includes(tag))
       .filter((t) => !q || `${t.title} ${t.description} ${t.assignee ?? ''} ${t.tags.join(' ')}`.toLowerCase().includes(q));
     const el = document.createElement('section');
     el.className = 'column';
@@ -284,6 +314,16 @@ function render() {
     wireDrop(el);
     board.appendChild(el);
   }
+}
+
+function renderTagFilter() {
+  const sel = $('#tag-filter');
+  const current = sel.value;
+  const tags = [...new Set(state.tasks.flatMap((t) => t.tags))].sort((a, b) =>
+    (a === 'bug' ? -2 : a === 'decision' ? -1 : 0) - (b === 'bug' ? -2 : b === 'decision' ? -1 : 0) || a.localeCompare(b));
+  if (current && !tags.includes(current)) tags.unshift(current);
+  sel.innerHTML = '<option value="">All tags</option>' + tags.map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('');
+  sel.value = current;
 }
 
 function renderMenu() {
@@ -320,7 +360,7 @@ function cardEl(t, showProject) {
       ${t.kind === 'bug' ? '<span class="pill bug">bug</span>' : ''}
       ${t.kind === 'decision' ? (t.answer ? '<span class="pill decided">✓ decided</span>' : '<span class="pill decision">needs decision</span>') : ''}
       ${t.priority !== 'medium' ? `<span class="pill">${t.priority}</span>` : ''}
-      ${t.assignee ? `<span class="pill ${isAgent ? 'agent' : ''}">${esc(t.assignee)}</span>` : ''}
+      ${t.assignee ? `<span class="pill ${isAgent ? 'agent' : ''}" title="${t.column === 'in_progress' ? 'Locked: claimed by ' + esc(t.assignee) : ''}">${t.column === 'in_progress' ? '🔒 ' : ''}${esc(t.assignee)}</span>` : ''}
       ${t.tags.filter((g) => g !== t.kind).map((g) => `<span class="pill">${esc(g)}</span>`).join('')}
       ${t.activity.some((a) => a.kind === 'comment') ? `<span>💬 ${t.activity.filter((a) => a.kind === 'comment').length}</span>` : ''}
       <span style="margin-left:auto">${ago(t.updatedAt)}</span>
@@ -431,7 +471,9 @@ function renderDecision(t) {
     ${t.recommendation ? `<div class="rec"><strong>Claude recommends:</strong> ${esc(t.recommendation)}</div>` : ''}
     ${opts.length ? `<div class="opts">${opts.map((o, i) => `<button type="button" data-answer="${i}">${esc(o)}</button>`).join('')}</div>` : ''}
     <div class="opts"><button type="button" data-answer="custom">Answer with my comment</button></div>
-    <p class="hint">Picking an option answers the decision and files it in Done. Anything typed in the comment box is added to the answer.</p>`;
+    <label class="route">Then move it to
+      <select id="decision-route"><option value="todo">To do (Claude acts on it)</option><option value="backlog">Backlog (park it)</option></select></label>
+    <p class="hint">Picking an option answers the decision. Anything typed in the comment box is added to the answer.</p>`;
   // Highlight the option the recommendation quotes; the longest match wins so "Soft delete" doesn't
   // light up when "Soft delete + purge" is the one recommended.
   const rec = t.recommendation?.toLowerCase() ?? '';
@@ -447,7 +489,7 @@ $('#decision-panel').addEventListener('click', async (e) => {
   const answer = [choice, comment].filter(Boolean).join(' — ');
   if (!answer) return alert('Type your answer in the comment box first.');
   try {
-    await api('POST', `/api/tasks/${t.id}/decide`, { answer });
+    await api('POST', `/api/tasks/${t.id}/decide`, { answer, column: $('#decision-route').value });
     $('#dialog').close();
     await refresh(true);
   } catch (err) {
@@ -519,6 +561,8 @@ async function openProject(id) {
   if (!p) return;
   editingProject = { id: p.id, paths: [...p.paths] };
   $('#project-form').name.value = p.name;
+  $('#project-form').autofixBugs.checked = p.settings.autofixBugs;
+  $('#project-form').chatDecisions.checked = p.settings.chatDecisions;
   $('#project-form').newPath.value = '';
   renderPaths();
   closeMenu();
@@ -564,7 +608,11 @@ $('#paths').addEventListener('click', (e) => {
 $('#project-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
-    await api('PATCH', `/api/projects/${editingProject.id}`, { name: e.target.name.value, paths: editingProject.paths });
+    await api('PATCH', `/api/projects/${editingProject.id}`, {
+      name: e.target.name.value,
+      paths: editingProject.paths,
+      settings: { autofixBugs: e.target.autofixBugs.checked, chatDecisions: e.target.chatDecisions.checked },
+    });
     $('#project-dialog').close();
     await refresh(true);
   } catch (err) {
@@ -587,6 +635,7 @@ $('#project-delete').addEventListener('click', async () => {
 });
 
 $('#filter').addEventListener('input', render);
+$('#tag-filter').addEventListener('change', render);
 
 refresh(true);
 setInterval(refresh, 2000); // pick up changes Claude makes via the MCP server
