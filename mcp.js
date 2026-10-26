@@ -20,6 +20,7 @@ const POLL_MS = 5000;
 
 const Column = z.enum(['bugs', 'decisions', 'backlog', 'todo', 'in_progress', 'review', 'done']);
 const Priority = z.enum(['low', 'medium', 'high', 'urgent']);
+const Difficulty = z.enum(['easy', 'medium', 'hard']);
 const ProjectRef = z.string().optional().describe('Project name or id. Defaults to the project linked to the current folder.');
 
 async function api(method, path, body) {
@@ -64,7 +65,7 @@ const KIND_MARK = { bug: '🐞 ', decision: '❓ ', task: '' };
 
 // Compact one-line summary for list views; full JSON for single-task views.
 const line = (t, projectName) =>
-  `#${t.id} [${t.column}] (${t.priority}) ${KIND_MARK[t.kind] ?? ''}${t.title}` +
+  `#${t.id} [${t.column}] (${t.priority}${t.difficulty ? `, ${t.difficulty}` : ''}) ${KIND_MARK[t.kind] ?? ''}${t.title}` +
   (t.kind === 'decision' && t.answer ? ` ⇒ answered: "${t.answer}"` : '') +
   (t.assignee ? ` @${t.assignee}` : '') +
   (t.parentId ? ` ↳ parent #${t.parentId}` : '') +
@@ -239,12 +240,14 @@ tool(
 tool(
   'update_task',
   'Edit the title, description or priority of a task you have in progress, or of a bug/decision you raised. ' +
+    'Set difficulty right after claiming, only if it is empty; humans own it once set. ' +
     'Column changes go through claim/submit/release; assignment follows claiming.',
   {
     id: z.number().int(),
     title: z.string().optional(),
     description: z.string().optional(),
     priority: Priority.optional(),
+    difficulty: Difficulty.optional().describe('Your estimate: easy | medium | hard. Only when the task has none.'),
   },
   async ({ id, ...fields }) => text(`Updated ${line(await api('PATCH', `/api/tasks/${id}`, fields))}`),
 );

@@ -169,6 +169,7 @@
       <label>Type<select name="kind"><option value="task">Task</option><option value="bug">Bug</option><option value="decision">Decision</option></select></label>
       <label>Parent<select name="parentId"></select></label>
       <label>Priority<select name="priority"></select></label>
+      <label>Difficulty<select name="difficulty"><option value="">Not set</option><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option></select></label>
       <label>Assignee<input name="assignee" placeholder="unassigned" /></label>
     </div>
     <div class="related" id="related" hidden></div>
@@ -406,6 +407,7 @@ function cardEl(t, showProject) {
       ${t.kind === 'bug' ? '<span class="pill bug">bug</span>' : ''}
       ${t.kind === 'decision' ? (t.answer ? '<span class="pill decided">✓ decided</span>' : '<span class="pill decision">needs decision</span>') : ''}
       ${t.priority !== 'medium' ? `<span class="pill">${t.priority}</span>` : ''}
+      ${t.difficulty ? `<span title="Difficulty: ${t.difficulty}">${{ easy: '●○○', medium: '●●○', hard: '●●●' }[t.difficulty]}</span>` : ''}
       ${t.assignee ? `<span class="pill ${isAgent ? 'agent' : ''}" title="${t.column === 'in_progress' ? 'Locked: claimed by ' + esc(t.assignee) : ''}">${t.column === 'in_progress' ? '🔒 ' : ''}${esc(t.assignee)}</span>` : ''}
       ${t.commits?.length ? `<span title="Linked commits">⎇ ${t.commits.length}</span>` : ''}
       ${t.activity.some((a) => a.kind === 'comment') ? `<span>💬 ${t.activity.filter((a) => a.kind === 'comment').length}</span>` : ''}
@@ -477,6 +479,7 @@ function openTask(id) {
   f.projectId.value = t.projectId;
   f.column.value = t.column;
   f.priority.value = t.priority;
+  f.difficulty.value = t.difficulty ?? '';
   f.kind.value = t.kind;
   // Any other task in the project can be the parent, except this task's own descendants.
   const below = new Set([t.id]);
@@ -596,6 +599,7 @@ $('#form').addEventListener('submit', async (e) => {
     projectId: Number(f.projectId.value),
     column: f.column.value,
     priority: f.priority.value,
+    difficulty: f.difficulty.value || null,
     kind: f.kind.value,
     // The parent list belongs to the task's current project, so moving it to another project drops the parent.
     parentId: f.parentId.value && Number(f.projectId.value) === state.tasks.find((x) => x.id === id)?.projectId

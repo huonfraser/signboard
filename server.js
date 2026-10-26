@@ -15,6 +15,7 @@ const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(os.home
 // bugs and decisions are intake lanes Claude raises into; the rest is the normal work flow.
 const COLUMNS = ['bugs', 'decisions', 'backlog', 'todo', 'in_progress', 'review', 'done'];
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
+const DIFFICULTIES = ['easy', 'medium', 'hard'];
 // A task keeps its kind after it leaves its intake column, so answered decisions stay findable.
 const KIND_FOR_COLUMN = { bugs: 'bug', decisions: 'decision' };
 const KINDS = ['task', 'bug', 'decision'];
@@ -42,6 +43,7 @@ function load() {
   for (const t of data.tasks) {
     t.projectId ??= data.projects[0].id;
     t.kind ??= 'task';
+    t.difficulty ??= null;
     delete t.tags; // tags were removed (#13); the type field and filter cover what they were used for
     // Subtasks used to point at their parent through relatedTaskId; parentId replaced that (#3).
     if (t.parentId === undefined) {
@@ -81,6 +83,9 @@ function findTask(id) {
 function validate(fields) {
   if (fields.column !== undefined && !COLUMNS.includes(fields.column)) {
     throw new HttpError(400, `column must be one of: ${COLUMNS.join(', ')}`);
+  }
+  if (fields.difficulty !== undefined && fields.difficulty !== null && !DIFFICULTIES.includes(fields.difficulty)) {
+    throw new HttpError(400, `difficulty must be one of: ${DIFFICULTIES.join(', ')}, or null`);
   }
   if (fields.priority !== undefined && !PRIORITIES.includes(fields.priority)) {
     throw new HttpError(400, `priority must be one of: ${PRIORITIES.join(', ')}`);
@@ -168,7 +173,7 @@ function checkAgentMove(actor, task, to, note) {
     'in_progress → review (with a note), in_progress → todo (release, with a note).');
 }
 
-const AGENT_EDITABLE = ['title', 'description', 'priority', 'options', 'recommendation'];
+const AGENT_EDITABLE = ['title', 'description', 'priority', 'difficulty', 'options', 'recommendation'];
 
 // Validate and adjust an update coming from Claude. Assignment follows the move: claiming locks, releasing unlocks.
 function agentUpdate(actor, task, input) {
@@ -180,6 +185,12 @@ function agentUpdate(actor, task, input) {
     if (task.column === 'review' || task.column === 'done') deny(`#${task.id} is in ${task.column}, waiting on a human.`);
     if (task.column === 'decisions' && createdBy(task) !== actor) deny(`#${task.id} is a decision raised by someone else.`);
     if (task.column === 'todo') deny(`Claim #${task.id} before editing it.`);
+  }
+  // Difficulty is the humans' call (decision #10); Claude may only fill it in when it's empty on a task it has claimed.
+  if (input.difficulty !== undefined) {
+    if (task.column !== 'in_progress' || task.assignee !== actor) deny('Claude sets difficulty only on a task it has in progress.');
+    if (task.difficulty) deny(`#${task.id} already has difficulty "${task.difficulty}"; only humans change it.`);
+    if (input.difficulty === null) deny("Claude can't clear difficulty.");
   }
   if (input.column !== undefined && input.column !== task.column) {
     checkAgentMove(actor, task, input.column, input.note);
@@ -231,6 +242,7 @@ function createTask(input, actor) {
     description: input.description || '',
     column,
     priority: input.priority || 'medium',
+    difficulty: input.difficulty || null,
     assignee: input.assignee || null,
     order: nextOrder(projectId, column),
     relatedTaskId: related?.id ?? null,
@@ -319,7 +331,7 @@ function reopenDecision(id, { reason, author }, actor) {
   return task;
 }
 
-const EDITABLE = ['title', 'description', 'column', 'priority', 'assignee', 'kind', 'parentId', 'order', 'projectId', 'options', 'recommendation'];
+const EDITABLE = ['title', 'description', 'column', 'priority', 'difficulty', 'assignee', 'kind', 'parentId', 'order', 'projectId', 'options', 'recommendation'];
 
 // Keep a task's decision fields in line with its kind.
 function applyKind(task, kind) {
@@ -360,6 +372,8 @@ function updateTask(id, input, actor) {
       changes.push(`Moved ${prev} → ${input[key]}`);
     } else if (key === 'projectId') {
       changes.push(`Moved to project ${findProject(input[key]).name}`);
+    } else if (key === 'difficulty') {
+      changes.push(input[key] ? `Difficulty set to ${input[key]}` : 'Difficulty cleared');
     } else if (key === 'parentId') {
       changes.push(input[key] ? `Parent set to #${input[key]}` : 'Parent removed');
     } else if (key === 'assignee') {
@@ -659,6 +673,7 @@ async function handle(req, res) {
     return send(res, 200, {
       columns: COLUMNS,
       priorities: PRIORITIES,
+      difficulties: DIFFICULTIES,
       projects: board.projects.map(withCounts),
       tasks: listTasks({ project: query.project }),
     });

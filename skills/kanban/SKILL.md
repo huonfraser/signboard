@@ -41,7 +41,7 @@ When the user asks to see or check the board, `list_tasks` per column (or one co
 ## Workflow 1: Tasks
 
 1. **Claim.** If the user named a task, `claim_task(id)`. Otherwise `claim_next_task` takes the top-priority unassigned task from To do. Claiming moves it to In progress and locks it to you.
-2. **Read** the full description and activity log (`get_task`). If the requirements are unclear in a way that changes what you'd build, go to Workflow 3 rather than guessing.
+2. **Read** the full description and activity log (`get_task`). If the requirements are unclear in a way that changes what you'd build, go to Workflow 3 rather than guessing. If the task has no difficulty yet, set your estimate (`update_task(id, difficulty: "easy" | "medium" | "hard")`). Never change a difficulty that's already set; humans own it.
 3. **Work.** `add_comment` at meaningful points: approach chosen, a non-obvious finding, partial progress on a long task. Keep comments short; no running commentary.
    - **Too big?** `create_subtask(parent_id, …)` puts a piece of *this* task into To do.
    - **Other ideas, follow-ups or refactors** you notice: don't create tasks for them. List them under "Follow-ups" in your review summary, so the human can add them to Backlog if they want them.
