@@ -273,6 +273,30 @@ function decideTask(id, { answer, column = 'todo', userQuote, author }, actor) {
   return task;
 }
 
+// A human takes back an answer: the decision returns to the decisions column, open and unassigned. The old
+// answer stays in the activity log, and the task it was blocking is told not to act on it any more.
+function reopenDecision(id, { reason, author }, actor) {
+  if (actor) deny('Only humans reopen decisions, in the board UI.');
+  const task = findTask(id);
+  if (task.kind !== 'decision') throw new HttpError(400, `Task ${id} is not a decision`);
+  if (!task.answer) throw new HttpError(409, `Decision ${id} is not answered`);
+  const previous = task.answer;
+  const why = reason && String(reason).trim();
+  addActivity(task, author, `Reopened. Previous answer: ${previous}${why ? `\nReason: ${why}` : ''}`, 'comment');
+  task.answer = null;
+  task.answeredAt = null;
+  updateTask(task.id, { column: 'decisions', assignee: null, author });
+  if (task.relatedTaskId) {
+    const related = board.tasks.find((t) => t.id === task.relatedTaskId);
+    if (related) {
+      addActivity(related, author, `Decision #${task.id} was reopened. Don't act on its previous answer ("${previous}"); this task is waiting on it again.`, 'event');
+      related.updatedAt = now();
+    }
+  }
+  save();
+  return task;
+}
+
 const EDITABLE = ['title', 'description', 'column', 'priority', 'assignee', 'kind', 'order', 'projectId', 'options', 'recommendation'];
 
 // Keep a task's decision fields in line with its kind.
@@ -631,6 +655,7 @@ async function handle(req, res) {
     }
     if (id && parts[3] === 'commits' && method === 'POST') return send(res, 201, linkCommit(id, await readBody(req), actor));
     if (id && parts[3] === 'decide' && method === 'POST') return send(res, 200, decideTask(id, await readBody(req), actor));
+    if (id && parts[3] === 'reopen' && method === 'POST') return send(res, 200, reopenDecision(id, await readBody(req), actor));
     if (id && !parts[3]) {
       if (method === 'GET') return send(res, 200, findTask(id));
       if (method === 'PATCH') return send(res, 200, updateTask(id, await readBody(req), actor));

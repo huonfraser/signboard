@@ -39,6 +39,7 @@ Claude needs a human call ──raise_decision─▶ Decisions ──human answe
 **3. Decisions.**
 - **Raising:** when a choice is yours, Claude raises it in ❓ Decisions with options and a recommendation instead of guessing. That covers unspecified behaviour, architecture or dependencies, anything destructive, and scope changes. The blocked task gets a note.
 - **Answering:** open the card, click an option or type your own, and choose where it goes: To do (Claude acts on it) or Backlog (parked). The header badge counts decisions waiting on you across projects.
+- **Changing your mind:** open an answered decision and click **Reopen decision**. It goes back to Decisions, open again. The old answer stays in its history, and the task it blocks is told not to act on that answer. Anything in the comment box is recorded as the reason.
 - **💬 Decisions from chat** (project setting): when you answer in a Claude Code chat, Claude records your answer on the board, quoting your words, and carries on without waiting.
 
 Turn the two settings on per project in ☰ → ⚙. Cards keep their kind (task, bug, decision) as they move. Dragging a card into Bugs or Decisions turns it into that kind.
@@ -150,6 +151,7 @@ Then in any linked project just tell Claude *"work the board"*.
 | DELETE | `/api/tasks/:id` | |
 | POST | `/api/tasks/:id/comments` | `{text, author?}` |
 | POST | `/api/tasks/:id/decide` | `{answer, column?}`: answer a decision and route it (humans: `todo` / `backlog`); notifies the blocked task. Agents also send `userQuote` |
+| POST | `/api/tasks/:id/reopen` | `{reason?}`: humans only. Take an answer back, return the decision to `decisions`, notify the blocked task |
 | POST | `/api/claim` | `{assignee, projectId, column?}` or `{assignee, taskId}` → `{task}` or `{task: null}` |
 
 Boards created before projects existed are migrated on startup: all their tasks move into a "General" project.

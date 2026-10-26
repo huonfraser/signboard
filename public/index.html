@@ -485,7 +485,9 @@ function renderDecision(t) {
   el.hidden = t.kind !== 'decision';
   if (el.hidden) return;
   if (t.answer) {
-    el.innerHTML = `<h4>Decided ${ago(t.answeredAt)}</h4><div class="answer">${esc(t.answer)}</div>`;
+    el.innerHTML = `<h4>Decided ${ago(t.answeredAt)}</h4><div class="answer">${esc(t.answer)}</div>
+      <div class="opts"><button type="button" data-reopen>Reopen decision</button></div>
+      <p class="hint">Reopening takes the answer back: the decision returns to Decisions, the old answer stays in the history, and the task it blocks is told not to act on it. Anything typed in the comment box is recorded as the reason.</p>`;
     return;
   }
   const opts = t.options ?? [];
@@ -503,6 +505,19 @@ function renderDecision(t) {
   if (best >= 0) el.querySelector(`[data-answer="${best}"]`).classList.add('recommended');
 }
 $('#decision-panel').addEventListener('click', async (e) => {
+  if (e.target.closest('[data-reopen]')) {
+    const t = state.tasks.find((x) => x.id === editingId);
+    const held = t.assignee ? ` ${t.assignee} has it claimed and may already be acting on it.` : '';
+    if (!confirm(`Reopen decision #${t.id}? Its answer "${t.answer}" will no longer apply.${held}`)) return;
+    try {
+      await api('POST', `/api/tasks/${t.id}/reopen`, { reason: $('#form').comment.value.trim() || undefined });
+      $('#dialog').close();
+      await refresh(true);
+    } catch (err) {
+      alert(err.message);
+    }
+    return;
+  }
   const b = e.target.closest('[data-answer]');
   if (!b) return;
   const t = state.tasks.find((x) => x.id === editingId);
