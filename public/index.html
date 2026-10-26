@@ -7,21 +7,23 @@
 <style>
   :root {
     --bg: #f4f5f7; --col: #ebecf0; --card: #fff; --text: #172b4d; --muted: #6b778c;
-    --border: #dfe1e6; --accent: #d97757; --shadow: 0 1px 2px rgba(9,30,66,.2);
+    --border: #dfe1e6; --accent: #d97757; --shadow: 0 1px 2px rgba(9,30,66,.2); --hover: rgba(9,30,66,.06);
     --low: #8993a4; --medium: #2684ff; --high: #ff991f; --urgent: #de350b;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #1d2125; --col: #282e33; --card: #22272b; --text: #dee4ea; --muted: #9fadbc;
-      --border: #3a434b; --shadow: 0 1px 2px rgba(0,0,0,.5);
+      --border: #3a434b; --shadow: 0 1px 2px rgba(0,0,0,.5); --hover: rgba(255,255,255,.06);
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
-  header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
-  header h1 { font-size: 18px; margin: 0; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 18px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   header .spacer { flex: 1; }
   header input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); width: 220px; }
+  .icon-btn { background: none; border: none; padding: 6px 8px; border-radius: 6px; font-size: 18px; line-height: 1; color: var(--text); cursor: pointer; }
+  .icon-btn:hover { background: var(--hover); }
   .status { font-size: 12px; color: var(--muted); }
   .board { display: flex; gap: 12px; padding: 16px; overflow-x: auto; align-items: flex-start; min-height: calc(100vh - 58px); }
   .column { background: var(--col); border-radius: 8px; width: 280px; min-width: 280px; display: flex; flex-direction: column; max-height: calc(100vh - 90px); }
@@ -35,18 +37,41 @@
   .card .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; font-size: 11px; color: var(--muted); align-items: center; }
   .pill { padding: 1px 6px; border-radius: 10px; background: var(--col); }
   .pill.agent { background: var(--accent); color: #fff; }
+  .pill.project { border: 1px solid var(--border); background: transparent; }
   .p-low { border-left-color: var(--low); } .p-medium { border-left-color: var(--medium); }
   .p-high { border-left-color: var(--high); } .p-urgent { border-left-color: var(--urgent); }
   .add { padding: 8px; }
   .add input { width: 100%; padding: 7px 9px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text); }
   .add input:focus { background: var(--card); border-color: var(--border); outline: none; }
+
+  /* project drawer */
+  .scrim { position: fixed; inset: 0; background: rgba(9,30,66,.35); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 10; }
+  .drawer { position: fixed; top: 0; left: 0; bottom: 0; width: min(300px, 86vw); background: var(--card);
+    transform: translateX(-100%); transition: transform .18s ease; z-index: 11; display: flex; flex-direction: column; }
+  body.menu-open .scrim { opacity: 1; pointer-events: auto; }
+  body.menu-open .drawer { transform: none; box-shadow: 2px 0 16px rgba(0,0,0,.2); }
+  .drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--border); }
+  .drawer-head h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0; }
+  .project-list { list-style: none; margin: 0; padding: 8px; overflow-y: auto; flex: 1; }
+  .project-list li { display: flex; align-items: center; gap: 4px; border-radius: 6px; }
+  .project-list li:hover { background: var(--hover); }
+  .project-list li.active { background: var(--col); }
+  .project-list a { flex: 1; min-width: 0; padding: 8px 10px; color: inherit; text-decoration: none; display: grid; }
+  .project-list .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .project-list .sub { font-size: 11px; color: var(--muted); }
+  .project-list .icon-btn { font-size: 14px; color: var(--muted); }
+  .project-list .divider { height: 1px; background: var(--border); margin: 6px 4px; }
+  .drawer-foot { padding: 10px; border-top: 1px solid var(--border); }
+  .drawer-foot input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
+
   dialog { border: none; border-radius: 10px; padding: 0; width: min(640px, 94vw); background: var(--card); color: var(--text); box-shadow: 0 8px 40px rgba(0,0,0,.3); }
   dialog::backdrop { background: rgba(9,30,66,.5); }
   .modal { padding: 20px; display: grid; gap: 12px; }
+  .modal h3 { margin: 0; font-size: 16px; }
   .modal input, .modal textarea, .modal select { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
   .modal textarea { min-height: 110px; resize: vertical; }
   .modal .title-input { font-size: 18px; font-weight: 600; }
-  .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
   .row label, .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; display: grid; gap: 4px; }
   .activity { max-height: 220px; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 8px; }
   .entry { font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--border); }
@@ -54,25 +79,42 @@
   .entry.event { color: var(--muted); font-size: 12px; }
   .entry .body { white-space: pre-wrap; margin-top: 2px; }
   .actions { display: flex; gap: 8px; justify-content: space-between; }
+  .hint { font-size: 12px; color: var(--muted); margin: 0; }
+  .paths { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+  .paths li { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--bg); border-radius: 6px; font: 12px ui-monospace, Menlo, monospace; }
+  .paths li span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  .paths .icon-btn { font-size: 13px; padding: 2px 6px; }
+  .add-path { display: flex; gap: 8px; }
+  .suggestions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .suggestions button { padding: 3px 8px; font: 12px ui-monospace, Menlo, monospace; }
   button { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--col); color: var(--text); cursor: pointer; font: inherit; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.danger { color: var(--urgent); }
-  @media (max-width: 600px) { .row { grid-template-columns: 1fr 1fr; } header input { width: 130px; } }
+  @media (max-width: 600px) { .row { grid-template-columns: 1fr 1fr; } header input { width: 120px; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>Kanban Vibes</h1>
+  <button class="icon-btn" id="menu-btn" aria-label="Projects menu">☰</button>
+  <h1 id="project-title">Kanban Vibes</h1>
   <span class="status" id="status"></span>
   <span class="spacer"></span>
   <input id="filter" placeholder="Filter tasks…" />
 </header>
 <main class="board" id="board"></main>
 
+<div class="scrim" id="scrim"></div>
+<nav class="drawer" aria-label="Projects">
+  <div class="drawer-head"><h2>Projects</h2><button class="icon-btn" id="menu-close" aria-label="Close menu">✕</button></div>
+  <ul class="project-list" id="project-list"></ul>
+  <div class="drawer-foot"><input id="new-project" placeholder="+ New project (Enter)" /></div>
+</nav>
+
 <dialog id="dialog">
   <form class="modal" method="dialog" id="form">
     <input class="title-input" name="title" required />
     <div class="row">
+      <label>Project<select name="projectId"></select></label>
       <label>Column<select name="column"></select></label>
       <label>Priority<select name="priority"></select></label>
       <label>Assignee<input name="assignee" placeholder="unassigned" /></label>
@@ -91,11 +133,41 @@
   </form>
 </dialog>
 
+<dialog id="project-dialog">
+  <form class="modal" method="dialog" id="project-form">
+    <h3>Project settings</h3>
+    <div class="field"><label>Name<input name="name" required /></label></div>
+    <div class="field">
+      <label>Linked folders</label>
+      <p class="hint">Claude Code sessions started in these folders (or any subfolder) work on this project's board.</p>
+    </div>
+    <ul class="paths" id="paths"></ul>
+    <div class="add-path">
+      <input name="newPath" placeholder="/absolute/path/to/repo" list="claude-folders" />
+      <button type="button" id="add-path">Link</button>
+    </div>
+    <datalist id="claude-folders"></datalist>
+    <div class="field" id="suggest-wrap">
+      <label>Recent Claude Code folders</label>
+      <div class="suggestions" id="suggestions"></div>
+    </div>
+    <div class="actions">
+      <button type="button" class="danger" id="project-delete">Delete project</button>
+      <span>
+        <button type="button" id="project-cancel">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </span>
+    </div>
+  </form>
+</dialog>
+
 <script>
 const LABELS = { backlog: 'Backlog', todo: 'To do', in_progress: 'In progress', review: 'Review', done: 'Done' };
-let state = { columns: [], priorities: [], tasks: [] };
+let state = { columns: [], priorities: [], projects: [], tasks: [] };
 let dragId = null;
 let editingId = null;
+let editingProject = null; // { id, name, paths } draft while the project dialog is open
+let needsRender = false;
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -114,16 +186,35 @@ async function api(method, url, body) {
   return data;
 }
 
-let needsRender = false;
+// ---------- selected project (kept in the URL hash: #p=3 or #all) ----------
 
-async function refresh() {
+function selection() {
+  const h = location.hash.slice(1);
+  if (h === 'all') return 'all';
+  const id = Number(new URLSearchParams(h).get('p'));
+  return id || null;
+}
+const isAll = () => selection() === 'all';
+const currentProject = () => state.projects.find((p) => p.id === selection());
+const projectName = (id) => state.projects.find((p) => p.id === id)?.name ?? '?';
+
+function selectProject(id) {
+  location.hash = id === 'all' ? 'all' : `p=${id}`;
+}
+
+window.addEventListener('hashchange', () => { state.tasks = []; closeMenu(); refresh(true); });
+
+async function refresh(force = false) {
   try {
-    const next = await api('GET', '/api/board');
-    if (JSON.stringify(next) !== JSON.stringify(state)) needsRender = true;
+    const sel = selection();
+    const next = await api('GET', sel && sel !== 'all' ? `/api/board?project=${sel}` : '/api/board');
+    // No (or a deleted) project selected: fall back to the first project.
+    if (sel !== 'all' && !next.projects.some((p) => p.id === sel)) return selectProject(next.projects[0].id);
+    if (force || JSON.stringify(next) !== JSON.stringify(state)) needsRender = true;
     state = next;
     $('#status').textContent = '';
-    // Don't clobber an in-progress drag or a half-typed quick-add; render on a later tick instead.
-    const typing = document.activeElement?.matches('.add input') && document.activeElement.value;
+    // Don't clobber an in-progress drag or a half-typed input; render on a later tick instead.
+    const typing = document.activeElement?.matches('.add input, #new-project') && document.activeElement.value;
     if (needsRender && dragId === null && !typing) {
       needsRender = false;
       render();
@@ -133,7 +224,15 @@ async function refresh() {
   }
 }
 
+// ---------- rendering ----------
+
 function render() {
+  const all = isAll();
+  const project = currentProject();
+  $('#project-title').textContent = all ? 'All projects' : project?.name ?? 'Kanban Vibes';
+  document.title = `${all ? 'All projects' : project?.name ?? ''} · Kanban Vibes`;
+  renderMenu();
+
   const q = $('#filter').value.toLowerCase();
   const board = $('#board');
   board.innerHTML = '';
@@ -145,12 +244,12 @@ function render() {
     el.className = 'column';
     el.dataset.column = col;
     el.innerHTML = `<h2><span>${LABELS[col] ?? col}</span><span>${tasks.length}</span></h2><div class="cards"></div>
-      <div class="add"><input placeholder="+ Add task" /></div>`;
+      ${all ? '' : '<div class="add"><input placeholder="+ Add task" /></div>'}`;
     const cards = $('.cards', el);
-    for (const t of tasks) cards.appendChild(cardEl(t));
-    $('.add input', el).addEventListener('keydown', async (e) => {
+    for (const t of tasks) cards.appendChild(cardEl(t, all));
+    $('.add input', el)?.addEventListener('keydown', async (e) => {
       if (e.key !== 'Enter' || !e.target.value.trim()) return;
-      await api('POST', '/api/tasks', { title: e.target.value.trim(), column: col });
+      await api('POST', '/api/tasks', { title: e.target.value.trim(), column: col, projectId: selection() });
       e.target.value = '';
       await refresh();
       $(`[data-column="${col}"] .add input`).focus();
@@ -160,7 +259,23 @@ function render() {
   }
 }
 
-function cardEl(t) {
+function renderMenu() {
+  const sel = selection();
+  const open = (p) => Object.entries(p.counts).filter(([c]) => c !== 'done').reduce((n, [, v]) => n + v, 0);
+  const totalOpen = state.projects.reduce((n, p) => n + open(p), 0);
+  const item = (id, name, sub, editable) => `<li class="${sel === id ? 'active' : ''}">
+      <a href="#${id === 'all' ? 'all' : `p=${id}`}"><span class="name">${esc(name)}</span><span class="sub">${sub}</span></a>
+      ${editable ? `<button class="icon-btn" data-edit="${id}" aria-label="Project settings" title="Project settings">⚙</button>` : ''}
+    </li>`;
+  $('#project-list').innerHTML =
+    item('all', 'All projects', `${totalOpen} open`, false) +
+    '<li class="divider" role="separator"></li>' +
+    state.projects
+      .map((p) => item(p.id, p.name, `${open(p)} open · ${p.paths.length ? `🔗 ${p.paths.length} folder${p.paths.length > 1 ? 's' : ''}` : 'not linked'}`, true))
+      .join('');
+}
+
+function cardEl(t, showProject) {
   const el = document.createElement('article');
   el.className = `card p-${t.priority}`;
   el.draggable = true;
@@ -169,6 +284,7 @@ function cardEl(t) {
   el.innerHTML = `<div class="title">${esc(t.title)}</div>
     <div class="meta">
       <span>#${t.id}</span>
+      ${showProject ? `<span class="pill project">${esc(projectName(t.projectId))}</span>` : ''}
       ${t.priority !== 'medium' ? `<span class="pill">${t.priority}</span>` : ''}
       ${t.assignee ? `<span class="pill ${isAgent ? 'agent' : ''}">${esc(t.assignee)}</span>` : ''}
       ${t.tags.map((g) => `<span class="pill">${esc(g)}</span>`).join('')}
@@ -181,6 +297,8 @@ function cardEl(t) {
   return el;
 }
 
+// ---------- drag and drop ----------
+
 function wireDrop(colEl) {
   const clear = () => document.querySelectorAll('.drop, .drop-before').forEach((n) => n.classList.remove('drop', 'drop-before'));
   colEl.addEventListener('dragover', (e) => {
@@ -189,7 +307,7 @@ function wireDrop(colEl) {
     clear();
     colEl.classList.add('drop');
     const before = e.target.closest('.card');
-    if (before && Number(before.dataset.id) !== dragId) before.classList.add('drop-before');
+    if (before && Number(before.dataset.id) !== dragId && !isAll()) before.classList.add('drop-before');
   });
   colEl.addEventListener('dragleave', (e) => { if (!colEl.contains(e.relatedTarget)) clear(); });
   colEl.addEventListener('drop', async (e) => {
@@ -204,7 +322,12 @@ function wireDrop(colEl) {
 }
 
 // Insert the dragged task before `beforeId` (or at the end) and renumber the column.
+// Order is per project, so the mixed "All projects" view only changes the column.
 async function moveTask(id, column, beforeId) {
+  if (isAll()) {
+    await api('PATCH', `/api/tasks/${id}`, { column });
+    return refresh();
+  }
   const ids = state.tasks.filter((t) => t.column === column && t.id !== id).map((t) => t.id);
   const idx = beforeId === null ? ids.length : ids.indexOf(beforeId);
   ids.splice(idx < 0 ? ids.length : idx, 0, id);
@@ -218,14 +341,18 @@ async function moveTask(id, column, beforeId) {
   await refresh();
 }
 
+// ---------- task dialog ----------
+
 function openTask(id) {
   const t = state.tasks.find((x) => x.id === id);
   if (!t) return;
   editingId = id;
   const f = $('#form');
+  f.projectId.innerHTML = state.projects.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
   f.column.innerHTML = state.columns.map((c) => `<option value="${c}">${LABELS[c] ?? c}</option>`).join('');
   f.priority.innerHTML = state.priorities.map((p) => `<option>${p}</option>`).join('');
   f.title.value = t.title;
+  f.projectId.value = t.projectId;
   f.column.value = t.column;
   f.priority.value = t.priority;
   f.assignee.value = t.assignee ?? '';
@@ -244,6 +371,7 @@ $('#form').addEventListener('submit', async (e) => {
   const id = editingId;
   await api('PATCH', `/api/tasks/${id}`, {
     title: f.title.value,
+    projectId: Number(f.projectId.value),
     column: f.column.value,
     priority: f.priority.value,
     assignee: f.assignee.value.trim() || null,
@@ -261,9 +389,110 @@ $('#delete').addEventListener('click', async () => {
   $('#dialog').close();
   await refresh();
 });
+
+// ---------- project menu ----------
+
+const openMenu = () => document.body.classList.add('menu-open');
+const closeMenu = () => document.body.classList.remove('menu-open');
+$('#menu-btn').addEventListener('click', openMenu);
+$('#menu-close').addEventListener('click', closeMenu);
+$('#scrim').addEventListener('click', closeMenu);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+$('#project-list').addEventListener('click', (e) => {
+  const edit = e.target.closest('[data-edit]');
+  if (edit) openProject(Number(edit.dataset.edit));
+  else if (e.target.closest('a')) closeMenu();
+});
+$('#new-project').addEventListener('keydown', async (e) => {
+  if (e.key !== 'Enter' || !e.target.value.trim()) return;
+  try {
+    const p = await api('POST', '/api/projects', { name: e.target.value.trim() });
+    e.target.value = '';
+    selectProject(p.id);
+    await refresh(true);
+    openProject(p.id); // straight into linking folders
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+// ---------- project dialog ----------
+
+async function openProject(id) {
+  const p = state.projects.find((x) => x.id === id);
+  if (!p) return;
+  editingProject = { id: p.id, paths: [...p.paths] };
+  $('#project-form').name.value = p.name;
+  $('#project-form').newPath.value = '';
+  renderPaths();
+  closeMenu();
+  $('#project-dialog').showModal();
+  // Suggest folders Claude Code has been used in, newest first.
+  const folders = await api('GET', '/api/claude-projects').catch(() => []);
+  editingProject.folders = folders;
+  renderPaths();
+}
+
+function renderPaths() {
+  const ep = editingProject;
+  $('#paths').innerHTML = ep.paths.length
+    ? ep.paths.map((p, i) => `<li><span title="${esc(p)}">‎${esc(p)}</span><button type="button" class="icon-btn" data-unlink="${i}" aria-label="Unlink">✕</button></li>`).join('')
+    : '<li><em style="font-family:inherit;color:var(--muted)">No folders linked yet</em></li>';
+  const folders = ep.folders ?? [];
+  const free = folders.filter((f) => !ep.paths.includes(f.path) && (f.linkedProjectId === null || f.linkedProjectId === ep.id));
+  $('#claude-folders').innerHTML = free.map((f) => `<option value="${esc(f.path)}">`).join('');
+  $('#suggestions').innerHTML = free.slice(0, 8).map((f) => `<button type="button" data-link="${esc(f.path)}" title="${esc(f.path)} · active ${ago(f.lastActive)}">+ ${esc(f.path.split('/').pop())}</button>`).join('');
+  $('#suggest-wrap').hidden = !free.length;
+}
+
+function addPath(p) {
+  p = p.trim().replace(/\/+$/, '');
+  if (!p) return;
+  if (!p.startsWith('/')) return alert('Folder must be an absolute path');
+  if (!editingProject.paths.includes(p)) editingProject.paths.push(p);
+  $('#project-form').newPath.value = '';
+  renderPaths();
+}
+
+$('#add-path').addEventListener('click', () => addPath($('#project-form').newPath.value));
+$('#project-form').newPath.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); addPath(e.target.value); }
+});
+$('#suggestions').addEventListener('click', (e) => { const b = e.target.closest('[data-link]'); if (b) addPath(b.dataset.link); });
+$('#paths').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-unlink]');
+  if (!b) return;
+  editingProject.paths.splice(Number(b.dataset.unlink), 1);
+  renderPaths();
+});
+$('#project-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await api('PATCH', `/api/projects/${editingProject.id}`, { name: e.target.name.value, paths: editingProject.paths });
+    $('#project-dialog').close();
+    await refresh(true);
+  } catch (err) {
+    alert(err.message);
+  }
+});
+$('#project-cancel').addEventListener('click', () => $('#project-dialog').close());
+$('#project-delete').addEventListener('click', async () => {
+  const p = state.projects.find((x) => x.id === editingProject.id);
+  const n = Object.values(p.counts).reduce((a, b) => a + b, 0);
+  if (!confirm(`Delete project "${p.name}"${n ? ` and its ${n} task${n > 1 ? 's' : ''}` : ''}? This cannot be undone.`)) return;
+  try {
+    await api('DELETE', `/api/projects/${p.id}`);
+    $('#project-dialog').close();
+    if (selection() === p.id) selectProject('all');
+    else await refresh(true);
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
 $('#filter').addEventListener('input', render);
 
-refresh();
+refresh(true);
 setInterval(refresh, 2000); // pick up changes Claude makes via the MCP server
 </script>
 </body>
