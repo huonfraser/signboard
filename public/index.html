@@ -131,6 +131,12 @@
   <span class="status" id="status"></span>
   <span class="spacer"></span>
   <button class="badge" id="decision-badge" title="Decisions waiting on you"></button>
+  <select id="sort" aria-label="Sort tasks">
+    <option value="priority">Sort: Priority</option>
+    <option value="created">Sort: Newest</option>
+    <option value="updated">Sort: Last updated</option>
+    <option value="manual">Sort: Manual</option>
+  </select>
   <select id="tag-filter" aria-label="Filter by tag"><option value="">All tags</option></select>
   <input id="filter" placeholder="Filter tasks…" />
 </header>
@@ -212,6 +218,16 @@ let dragId = null;
 let editingId = null;
 let editingProject = null; // { id, name, paths } draft while the project dialog is open
 let needsRender = false;
+
+const PRIORITY_RANK = { urgent: 0, high: 1, medium: 2, low: 3 };
+// Each sort falls back to the manual order so ties stay stable.
+const SORTS = {
+  priority: (a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.order - b.order,
+  created: (a, b) => b.createdAt.localeCompare(a.createdAt) || a.order - b.order,
+  updated: (a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.order - b.order,
+  manual: (a, b) => a.order - b.order,
+};
+const isManual = () => $('#sort').value === 'manual';
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -296,7 +312,8 @@ function render() {
     const tasks = state.tasks
       .filter((t) => t.column === col)
       .filter((t) => !tag || t.tags.includes(tag))
-      .filter((t) => !q || `${t.title} ${t.description} ${t.assignee ?? ''} ${t.tags.join(' ')}`.toLowerCase().includes(q));
+      .filter((t) => !q || `${t.title} ${t.description} ${t.assignee ?? ''} ${t.tags.join(' ')}`.toLowerCase().includes(q))
+      .sort(SORTS[$('#sort').value] ?? SORTS.manual);
     const el = document.createElement('section');
     el.className = 'column';
     el.dataset.column = col;
@@ -381,7 +398,7 @@ function wireDrop(colEl) {
     clear();
     colEl.classList.add('drop');
     const before = e.target.closest('.card');
-    if (before && Number(before.dataset.id) !== dragId && !isAll()) before.classList.add('drop-before');
+    if (before && Number(before.dataset.id) !== dragId && !isAll() && isManual()) before.classList.add('drop-before');
   });
   colEl.addEventListener('dragleave', (e) => { if (!colEl.contains(e.relatedTarget)) clear(); });
   colEl.addEventListener('drop', async (e) => {
@@ -396,9 +413,11 @@ function wireDrop(colEl) {
 }
 
 // Insert the dragged task before `beforeId` (or at the end) and renumber the column.
-// Order is per project, so the mixed "All projects" view only changes the column.
+// Order is per project, so the mixed "All projects" view only changes the column,
+// and so does any sort other than manual, where the drop position means nothing.
 async function moveTask(id, column, beforeId) {
-  if (isAll()) {
+  if (isAll() || !isManual()) {
+    if (state.tasks.find((t) => t.id === id)?.column === column) return;
     await api('PATCH', `/api/tasks/${id}`, { column });
     return refresh();
   }
@@ -636,6 +655,11 @@ $('#project-delete').addEventListener('click', async () => {
 
 $('#filter').addEventListener('input', render);
 $('#tag-filter').addEventListener('change', render);
+try { const s = localStorage.getItem('kanban-sort'); if (s && SORTS[s]) $('#sort').value = s; } catch {}
+$('#sort').addEventListener('change', () => {
+  try { localStorage.setItem('kanban-sort', $('#sort').value); } catch {}
+  render();
+});
 
 refresh(true);
 setInterval(refresh, 2000); // pick up changes Claude makes via the MCP server
