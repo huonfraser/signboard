@@ -74,7 +74,8 @@ const line = (t, projectName) =>
 const counts = (p) => Object.entries(p.counts).filter(([, n]) => n).map(([c, n]) => `${c}:${n}`).join(' ') || 'empty';
 const settingsText = (s) =>
   `Autofix bugs: ${s.autofixBugs ? 'ON (you may route bugs to todo/in_progress/decisions yourself)' : 'off (bugs wait in bugs for human triage)'}\n` +
-  `Decisions from chat: ${s.chatDecisions ? 'ON (record_decision may record answers the user gives in chat)' : 'off (only humans answer decisions, on the board)'}`;
+  `Decisions from chat: ${s.chatDecisions ? 'ON (record_decision may record answers the user gives in chat)' : 'off (only humans answer decisions, on the board)'}\n` +
+  `Concurrent sessions: ${s.maxSessions ?? 1} (working the board runs at most this many items at once, one session per item)`;
 
 const text = (s) => ({ content: [{ type: 'text', text: s }] });
 const json = (o) => text(JSON.stringify(o, null, 2));

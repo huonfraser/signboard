@@ -20,7 +20,18 @@ const DIFFICULTIES = ['easy', 'medium', 'hard'];
 const KIND_FOR_COLUMN = { bugs: 'bug', decisions: 'decision' };
 const KINDS = ['task', 'bug', 'decision'];
 // Per-project switches, set by humans in the UI, that loosen the bug and decision workflows for Claude.
-const DEFAULT_SETTINGS = { autofixBugs: false, chatDecisions: false };
+const DEFAULT_SETTINGS = { autofixBugs: false, chatDecisions: false, maxSessions: 1 };
+const MAX_SESSIONS_LIMIT = 10;
+
+// Booleans are toggles; maxSessions is how many board items Claude may work at once, one session each.
+function coerceSetting(key, value) {
+  if (key !== 'maxSessions') return Boolean(value);
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > MAX_SESSIONS_LIMIT) {
+    throw new HttpError(400, `maxSessions must be a whole number from 1 to ${MAX_SESSIONS_LIMIT}`);
+  }
+  return n;
+}
 const PRIORITY_RANK = { urgent: 0, high: 1, medium: 2, low: 3 };
 
 // ---------- storage ----------
@@ -547,7 +558,7 @@ function updateProject(id, { name, paths, settings }) {
   if (settings !== undefined) {
     const unknown = Object.keys(settings).filter((k) => !(k in DEFAULT_SETTINGS));
     if (unknown.length) throw new HttpError(400, `Unknown settings: ${unknown.join(', ')}`);
-    project.settings = { ...project.settings, ...Object.fromEntries(Object.entries(settings).map(([k, v]) => [k, Boolean(v)])) };
+    project.settings = { ...project.settings, ...Object.fromEntries(Object.entries(settings).map(([k, v]) => [k, coerceSetting(k, v)])) };
   }
   if (name !== undefined) {
     checkName(name, project.id);

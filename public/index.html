@@ -65,6 +65,7 @@
   .toggles { display: grid; gap: 10px; }
   .toggle { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: start; cursor: pointer; }
   .toggle input { width: auto; margin: 3px 0 0; grid-row: span 2; }
+  .toggle input[type=number] { width: 4.5em; margin: 0; }
   .toggle strong { font-size: 13px; }
   .toggle span { font-size: 12px; color: var(--muted); }
   .route { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
@@ -220,6 +221,9 @@
       <label class="toggle"><input type="checkbox" name="chatDecisions" />
         <strong>Decisions from chat</strong>
         <span>When you answer a decision in a Claude Code chat, Claude records your answer (quoting you) and carries on, instead of waiting for you to answer on the board.</span></label>
+      <label class="toggle"><input type="number" name="maxSessions" min="1" max="10" step="1" required />
+        <strong>Concurrent sessions</strong>
+        <span>When you ask Claude to work the board, each item is opened in its own Claude Code session. This is how many may run at once.</span></label>
     </div>
     <div class="field" id="suggest-wrap">
       <label>Recent Claude Code folders</label>
@@ -659,6 +663,7 @@ async function openProject(id) {
   $('#project-form').name.value = p.name;
   $('#project-form').autofixBugs.checked = p.settings.autofixBugs;
   $('#project-form').chatDecisions.checked = p.settings.chatDecisions;
+  $('#project-form').maxSessions.value = p.settings.maxSessions ?? 1;
   $('#project-form').newPath.value = '';
   renderPaths();
   closeMenu();
@@ -707,7 +712,11 @@ $('#project-form').addEventListener('submit', async (e) => {
     await api('PATCH', `/api/projects/${editingProject.id}`, {
       name: e.target.name.value,
       paths: editingProject.paths,
-      settings: { autofixBugs: e.target.autofixBugs.checked, chatDecisions: e.target.chatDecisions.checked },
+      settings: {
+        autofixBugs: e.target.autofixBugs.checked,
+        chatDecisions: e.target.chatDecisions.checked,
+        maxSessions: Number(e.target.maxSessions.value),
+      },
     });
     $('#project-dialog').close();
     await refresh(true);

@@ -1,6 +1,6 @@
 ---
 name: kanban
-description: Workflow for working from the local kanban board (the `kanban` MCP server). Use whenever the kanban MCP tools are available and you are doing project work, when the user says "work the board", "next task", "check the board", or refers to a task by number, and whenever you find a bug or reach a choice the user should make. Covers claiming from To do, submitting for review, raising bugs into Bugs, raising decisions into Decisions, and the guardrails (never touch Backlog, never move to Done).
+description: Workflow for working from the local kanban board (the `kanban` MCP server). Use whenever the kanban MCP tools are available and you are doing project work, when the user says "work the board", "next task", "check the board", or refers to a task by number, and whenever you find a bug or reach a choice the user should make. Covers claiming from To do, opening each item in its own session (up to the user's Concurrent sessions setting), submitting for review, raising bugs into Bugs, raising decisions into Decisions, and the guardrails (never touch Backlog, never move to Done).
 ---
 
 # Kanban workflow
@@ -24,14 +24,15 @@ Claude needs a human call ─raise_decision─▶ Decisions ──human answer�
 - **Only work on tasks you've claimed.** A task in progress is locked to whoever claimed it. Don't work on, edit or move another agent's task.
 - **Don't release new work yourself.** The only items you create are bugs, decisions and subtasks of a task you have in progress.
 - **Never answer a decision yourself.** Only record an answer the user actually gave, and only when "Decisions from chat" is on (Workflow 3).
+- **Never change Concurrent sessions.** The user sets it on the board (project settings ⚙). If they ask for more or fewer sessions in chat, tell them to change it there; don't pick a number yourself.
 - **Use the MCP tools only.** Never call the board's HTTP API directly (curl, fetch, scripts) or edit its data file.
 
 The server enforces these guardrails and returns an error explaining why. Treat that error as the workflow working, not as an obstacle to route around.
 
 ## Start of session
 
-1. `current_project`. Note the two settings it reports: **Autofix bugs** and **Decisions from chat**. If the folder isn't linked, ask the user which project it belongs to (show `list_projects`), then `link_project`. Don't guess.
-2. `list_tasks(assignee: "claude", column: "in_progress")`. If you have something in progress, resume it before claiming anything new.
+1. `current_project`. Note the three settings it reports: **Autofix bugs**, **Decisions from chat** and **Concurrent sessions**. If the folder isn't linked, ask the user which project it belongs to (show `list_projects`), then `link_project`. Don't guess.
+2. If you were started for one item, that item is your only work: skip to Workflow 1, step 2. Otherwise `list_tasks(assignee: "claude", column: "in_progress")`. An item there may belong to an item session that is still running (check your linked sessions); leave those alone. Resume any other in-progress item before claiming anything new: in its own session when working the board, otherwise here.
 3. `get_decisions(status: "answered")`. Any answered decision now sitting in **To do** is released work. If it unblocks a task you have in progress, `claim_task` it, apply the answer in that task, and submit both. Otherwise treat it like any To do task.
 
 ## Viewing the board
@@ -40,7 +41,7 @@ When the user asks to see or check the board, `list_tasks` per column (or one co
 
 ## Workflow 1: Tasks
 
-1. **Claim.** If the user named a task, `claim_task(id)`. Otherwise `claim_next_task` takes the top-priority unassigned task from To do. Claiming moves it to In progress and locks it to you.
+1. **Claim.** If you were started for a task, it is already claimed: go to step 2. If the user named a task and you are working it in this session, `claim_task(id)`. Claiming moves it to In progress and locks it. To work through To do, see "Working the board" instead: each item gets its own session.
 2. **Read** the full description and activity log (`get_task`). If the requirements are unclear in a way that changes what you'd build, go to Workflow 3 rather than guessing. If the task has no difficulty yet, set your estimate (`update_task(id, difficulty: "easy" | "medium" | "hard")`). Never change a difficulty that's already set; humans own it.
 3. **Work.** `add_comment` at meaningful points: approach chosen, a non-obvious finding, partial progress on a long task. Keep comments short; no running commentary.
    - **Too big?** `create_subtask(parent_id, …)` puts a piece of *this* task into To do.
@@ -54,9 +55,23 @@ When the user asks to see or check the board, `list_tasks` per column (or one co
    - **Decisions:** raised or applied, by number.
    - **Follow-ups:** suggestions for Backlog.
 6. **Can't finish it** as described (wrong premise, out of your reach)? `release_task(id, reason)` puts it back in To do, unlocked. If a human needs to choose how to proceed, raise a decision instead and keep the task.
-7. **Next.** If the user asked you to "work the board", go back to step 1. When To do is empty:
-   - If the user asked you to keep polling, `wait_for_task`. It waits for new work and claims it; call it again on timeout.
-   - Otherwise stop. If you did nothing this session, the answer is simply **"No work available."** Don't list or suggest Backlog tasks. If you did work, summarise what you did and what's waiting on the user (open decisions, untriaged bugs).
+7. **Next.** If you were started for one item (see "Working the board"), stop after submitting or releasing it. Otherwise, if the user asked you to work the board, continue as in "Working the board".
+
+## Working the board
+
+When the user says "work the board" (or "next task" without naming one), **each item is opened in its own new session**. This session coordinates: it picks items and starts sessions, and does none of the items' work itself.
+
+1. **Limit.** The **Concurrent sessions** setting from `current_project` is how many item sessions may run at once. The default is **1**: one session open at a time. Only the user changes it (Guardrails).
+2. **Start one session per item.** While fewer than that many item sessions are running and To do has work:
+   - `claim_next_task` (or `claim_task(id)` for an item the user named). Claiming here reserves the item so two sessions never get the same one.
+   - Start a new session for it (`start_session`, `initiation: "user_asked"`, `context: "fresh"`), titled `#N <task title>`. With a limit of 1, the session shares this folder (`use_worktree: false`); with more than 1, give each its own worktree (`use_worktree: true`) so they don't overwrite each other.
+   - Brief it with: "You are working kanban task #N, already claimed and in progress. Follow the kanban skill's Workflow 1 from step 2 for #N only: read it, do it, commit, `link_commit`, `submit_for_review` (or `release_task` if it can't be done). Raise bugs and decisions as the skill says. Don't claim or work any other task, and don't start sessions."
+3. **When an item session finishes** (you're notified when it ends a turn), check the board: the item should be in Review, or back in To do if released. If it's still in progress and the session is waiting on the user (e.g. a decision), it still counts against the limit. Then start the next item, back to step 2.
+4. **To do is empty:**
+   - If the user asked you to keep polling, `wait_for_task` (it claims what arrives; start a session for it as in step 2), and call it again on timeout.
+   - Otherwise stop once your item sessions have finished. If no item was started, the answer is simply **"No work available."** Don't list or suggest Backlog tasks. Otherwise summarise per item (number, outcome, session) and what's waiting on the user (open decisions, untriaged bugs).
+
+If you can't start sessions (no `start_session` tool in this environment), say so once, then work the items yourself one at a time with Workflow 1.
 
 ## Workflow 2: Bugs
 
