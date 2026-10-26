@@ -243,6 +243,9 @@
 const LABELS = { bugs: 'Bugs', decisions: 'Decisions', backlog: 'Backlog', todo: 'To do', in_progress: 'In progress', review: 'Review', done: 'Done' };
 let state = { columns: [], priorities: [], projects: [], tasks: [] };
 let dragId = null;
+// Mirrors BLOCKED_MOVES in server.js: a bug can't be moved into Decisions, nor a decision into Bugs.
+const BLOCKED_MOVES = { bug: 'decisions', decision: 'bugs' };
+const blockedMove = (t, column) => !!t && t.column !== column && BLOCKED_MOVES[t.kind] === column;
 let editingId = null;
 let editingProject = null; // { id, name, paths } draft while the project dialog is open
 let needsRender = false;
@@ -429,6 +432,8 @@ function wireDrop(colEl) {
   const clear = () => document.querySelectorAll('.drop, .drop-before').forEach((n) => n.classList.remove('drop', 'drop-before'));
   colEl.addEventListener('dragover', (e) => {
     if (dragId === null) return;
+    // Not calling preventDefault refuses the drop, so the browser shows a no-drop cursor.
+    if (blockedMove(state.tasks.find((t) => t.id === dragId), colEl.dataset.column)) return;
     e.preventDefault();
     clear();
     colEl.classList.add('drop');
@@ -443,7 +448,12 @@ function wireDrop(colEl) {
     const id = dragId;
     dragId = null;
     if (id === null) return;
-    await moveTask(id, colEl.dataset.column, before ? Number(before.dataset.id) : null);
+    try {
+      await moveTask(id, colEl.dataset.column, before ? Number(before.dataset.id) : null);
+    } catch (err) {
+      uiAlert(err.message);
+      await refresh();
+    }
   });
 }
 
@@ -598,20 +608,24 @@ $('#form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target;
   const id = editingId;
-  await api('PATCH', `/api/tasks/${id}`, {
-    title: f.title.value,
-    projectId: Number(f.projectId.value),
-    column: f.column.value,
-    priority: f.priority.value,
-    difficulty: f.difficulty.value || null,
-    kind: f.kind.value,
-    // The parent list belongs to the task's current project, so moving it to another project drops the parent.
-    parentId: f.parentId.value && Number(f.projectId.value) === state.tasks.find((x) => x.id === id)?.projectId
-      ? Number(f.parentId.value) : null,
-    assignee: f.assignee.value.trim() || null,
-    description: f.description.value,
-  });
-  if (f.comment.value.trim()) await api('POST', `/api/tasks/${id}/comments`, { text: f.comment.value.trim() });
+  try {
+    await api('PATCH', `/api/tasks/${id}`, {
+      title: f.title.value,
+      projectId: Number(f.projectId.value),
+      column: f.column.value,
+      priority: f.priority.value,
+      difficulty: f.difficulty.value || null,
+      kind: f.kind.value,
+      // The parent list belongs to the task's current project, so moving it to another project drops the parent.
+      parentId: f.parentId.value && Number(f.projectId.value) === state.tasks.find((x) => x.id === id)?.projectId
+        ? Number(f.parentId.value) : null,
+      assignee: f.assignee.value.trim() || null,
+      description: f.description.value,
+    });
+    if (f.comment.value.trim()) await api('POST', `/api/tasks/${id}/comments`, { text: f.comment.value.trim() });
+  } catch (err) {
+    return uiAlert(err.message); // e.g. a bug moved into Decisions; the dialog stays open to fix it
+  }
   $('#dialog').close();
   await refresh();
 });

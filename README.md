@@ -42,7 +42,7 @@ Claude needs a human call ──raise_decision─▶ Decisions ──human answe
 - **Changing your mind:** open an answered decision and click **Reopen decision**. It goes back to Decisions, open again. The old answer stays in its history, and the task it blocks is told not to act on that answer. Anything in the comment box is recorded as the reason.
 - **💬 Decisions from chat** (project setting): when you answer in a Claude Code chat, Claude records your answer on the board, quoting your words, and carries on without waiting.
 
-Turn the two settings on per project in ☰ → ⚙. Cards keep their kind (task, bug, decision) as they move. Dragging a card into Bugs or Decisions turns it into that kind.
+Turn the two settings on per project in ☰ → ⚙. Cards keep their kind (task, bug, decision) as they move. Dragging a task into Bugs or Decisions turns it into that kind. A bug can't be moved into Decisions, and a decision can't be moved into Bugs; raise a new card instead.
 
 ## Projects and Claude Code folders
 

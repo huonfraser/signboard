@@ -20,6 +20,12 @@ const DIFFICULTIES = ['easy', 'medium', 'hard'];
 // A task keeps its kind after it leaves its intake column, so answered decisions stay findable.
 const KIND_FOR_COLUMN = { bugs: 'bug', decisions: 'decision' };
 const KINDS = ['task', 'bug', 'decision'];
+// Moving a task into an intake column makes it that kind, but a bug never becomes a decision that way, nor a decision
+// a bug: the card would lose what it was raised as. A choice about how to fix a bug is raised as its own decision.
+const BLOCKED_MOVES = {
+  bug: { column: 'decisions', error: "A bug can't be moved into Decisions. Raise a decision about it instead." },
+  decision: { column: 'bugs', error: "A decision can't be moved into Bugs. Raise a bug instead." },
+};
 // Per-project switches, set by humans in the UI, that loosen the bug and decision workflows for Claude.
 const DEFAULT_SETTINGS = { autofixBugs: false, chatDecisions: false, maxSessions: 1 };
 const MAX_SESSIONS_LIMIT = 10;
@@ -360,6 +366,8 @@ function applyKind(task, kind) {
 function updateTask(id, input, actor) {
   const task = findTask(id);
   validate(input);
+  const blocked = BLOCKED_MOVES[task.kind];
+  if (blocked && input.column === blocked.column && task.column !== blocked.column) throw new HttpError(400, blocked.error);
   if (actor) input = agentUpdate(actor, task, { ...input });
   const author = actor || input.author;
   if (input.projectId !== undefined) input = { ...input, projectId: Number(input.projectId) };
