@@ -1,6 +1,6 @@
 ---
-name: kanban
-description: Workflow for working from Signboard, the local kanban board (the `kanban` MCP server). Use whenever the kanban MCP tools are available and you are doing project work, when the user says "work the board", "next task", "check the board", or refers to a task by number, and whenever you find a bug or reach a choice the user should make. Covers claiming from To do, opening each item in its own session (up to the user's Concurrent sessions setting), submitting for review, raising bugs into Bugs, raising decisions into Decisions, and the guardrails (never touch Backlog, never move to Done).
+name: signboard
+description: Workflow for working from Signboard, the local kanban board (the `signboard` MCP server). Use whenever the signboard MCP tools are available and you are doing project work, when the user says "work the board", "next task", "check the board", or refers to a task by number, and whenever you find a bug or reach a choice the user should make. Covers claiming from To do, opening each item in its own session (up to the user's Concurrent sessions setting), submitting for review, raising bugs into Bugs, raising decisions into Decisions, and the guardrails (never touch Backlog, never move to Done).
 ---
 
 # Signboard workflow
@@ -65,7 +65,7 @@ When the user says "work the board" (or "next task" without naming one), **each 
 2. **Start one session per item.** While fewer than that many item sessions are running and To do has work:
    - `claim_next_task` (or `claim_task(id)` for an item the user named). Claiming here reserves the item so two sessions never get the same one.
    - Start a new session for it (`start_session`, `initiation: "user_asked"`, `context: "fresh"`), titled `#N <task title>`. With a limit of 1, the session shares this folder (`use_worktree: false`); with more than 1, give each its own worktree (`use_worktree: true`) so they don't overwrite each other.
-   - Brief it with: "You are working kanban task #N, already claimed and in progress. Follow the kanban skill's Workflow 1 from step 2 for #N only: read it, do it, commit, `link_commit`, `submit_for_review` (or `release_task` if it can't be done). Raise bugs and decisions as the skill says. Don't claim or work any other task, and don't start sessions."
+   - Brief it with: "You are working kanban task #N, already claimed and in progress. Follow the signboard skill's Workflow 1 from step 2 for #N only: read it, do it, commit, `link_commit`, `submit_for_review` (or `release_task` if it can't be done). Raise bugs and decisions as the skill says. Don't claim or work any other task, and don't start sessions."
 3. **When an item session finishes** (you're notified when it ends a turn), check the board: the item should be in Review, or back in To do if released. If it's still in progress and the session is waiting on the user (e.g. a decision), it still counts against the limit. Then start the next item, back to step 2.
 4. **To do is empty:**
    - If the user asked you to keep polling, `wait_for_task` (it claims what arrives; start a session for it as in step 2), and call it again on timeout.

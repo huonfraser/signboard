@@ -53,7 +53,7 @@ Two ways to link a folder:
 - **In the UI:** open ☰ → ⚙ on a project (or create one with **+ New project**). The settings window suggests folders you've recently used Claude Code in, read from `~/.claude/projects`. Click one to link it, or type any absolute path.
 - **From Claude Code:** in an unlinked folder, the tools return an error that prompts Claude to ask you which project it belongs to and then call `link_project`. You can also just say *"link this folder to the kanban project X"*.
 
-Order of precedence for which project a tool call uses: an explicit `project` argument, then the `KANBAN_PROJECT` env var (name or id), then the linked folder.
+Order of precedence for which project a tool call uses: an explicit `project` argument, then the `SIGNBOARD_PROJECT` env var (name or id), then the linked folder.
 
 ## Run it
 
@@ -62,20 +62,32 @@ npm install
 npm start          # http://localhost:4477
 ```
 
-Environment variables: `KANBAN_PORT` (default `4477`), `KANBAN_DATA` (default `./data/board.json`).
+Environment variables: `SIGNBOARD_PORT` (default `4477`), `SIGNBOARD_DATA` (default `./data/board.json`). The pre-rename names `KANBAN_*` still work as a fallback for every variable here and below.
 
 ## Connect Claude Code
 
 Register the MCP server once at user scope so every Claude Code session can see the board (run from this directory):
 
 ```bash
-claude mcp add --scope user kanban -- node "$(pwd)/mcp.js"
+claude mcp add --scope user signboard -- node "$(pwd)/mcp.js"
 ```
 
 The board server must be running (`npm start`); the MCP server is a thin client over it. Optional env for the MCP server:
 
-- `KANBAN_URL` — board address (default `http://localhost:4477`)
-- `KANBAN_AGENT` — name Claude uses when claiming/commenting (default `claude`). Give parallel sessions different names, e.g. `claude mcp add ... -e KANBAN_AGENT=claude-api`.
+- `SIGNBOARD_URL` — board address (default `http://localhost:4477`)
+- `SIGNBOARD_AGENT` — name Claude uses when claiming/commenting (default `claude`). Give parallel sessions different names, e.g. `claude mcp add ... -e SIGNBOARD_AGENT=claude-api`.
+
+### Upgrading from the `kanban` names
+
+Before the rename to Signboard, the MCP server and skill were both called `kanban`, so the tools were `mcp__kanban__*`. To switch an existing install over (new tool names only appear in new sessions):
+
+```bash
+claude mcp remove --scope user kanban
+claude mcp add --scope user signboard -- node "$(pwd)/mcp.js"
+rm ~/.claude/skills/kanban && ln -s "$(pwd)/skills/signboard" ~/.claude/skills/signboard
+```
+
+Old `KANBAN_*` env vars keep working, so there is nothing to change there unless you want the new names.
 
 ### MCP tools
 
@@ -100,7 +112,7 @@ The board server must be running (`npm start`); the MCP server is a thin client 
 
 ### Guardrails
 
-The server enforces these rules on every request from Claude. The MCP server marks each request with an `X-Kanban-Agent` header, and requests from the UI are unrestricted.
+The server enforces these rules on every request from Claude. The MCP server marks each request with an `X-Signboard-Agent` header, and requests from the UI are unrestricted.
 
 - **Backlog is off-limits.** Claude never creates, edits, moves, claims or comments on Backlog tasks, and never moves anything into Backlog.
 - **No Done.** Claude never moves anything to Done.
@@ -117,9 +129,9 @@ The server enforces these rules on every request from Claude. The MCP server mar
 
 The MCP server also gives Claude a short workflow reminder whenever it connects. The skill tells Claude never to call the HTTP API directly. That is an honour-system rule: the server can't tell a hand-written request from a UI request.
 
-## The kanban skill
+## The signboard skill
 
-[`skills/kanban/SKILL.md`](skills/kanban/SKILL.md) is a Claude Code skill with the full workflow:
+[`skills/signboard/SKILL.md`](skills/signboard/SKILL.md) is a Claude Code skill with the full workflow:
 - the start-of-session checks (linked project, answered decisions, resuming in-progress work),
 - when to raise a bug versus fix it,
 - what counts as your decision,
@@ -128,7 +140,7 @@ The MCP server also gives Claude a short workflow reminder whenever it connects.
 Install it for all projects by symlinking it into your user skills, so edits here take effect immediately:
 
 ```bash
-mkdir -p ~/.claude/skills && ln -s "$(pwd)/skills/kanban" ~/.claude/skills/kanban
+mkdir -p ~/.claude/skills && ln -s "$(pwd)/skills/signboard" ~/.claude/skills/signboard
 ```
 
 Then in any linked project just tell Claude *"work the board"*.

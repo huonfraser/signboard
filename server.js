@@ -8,8 +8,9 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.KANBAN_PORT || 4477);
-const DATA_FILE = process.env.KANBAN_DATA || path.join(ROOT, 'data', 'board.json');
+// SIGNBOARD_* env vars, falling back to the pre-rename KANBAN_* names so existing configs keep working.
+const PORT = Number(process.env.SIGNBOARD_PORT || process.env.KANBAN_PORT || 4477);
+const DATA_FILE = process.env.SIGNBOARD_DATA || process.env.KANBAN_DATA || path.join(ROOT, 'data', 'board.json');
 const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
 
 // bugs and decisions are intake lanes Claude raises into; the rest is the normal work flow.
@@ -132,7 +133,8 @@ function nextOrder(projectId, column) {
 }
 
 // ---------- agent policy ----------
-// Requests from Claude (via the MCP server) carry an X-Kanban-Agent header naming the agent ("actor").
+// Requests from Claude (via the MCP server) carry an X-Signboard-Agent header naming the agent ("actor").
+// X-Kanban-Agent, its pre-rename name, is still honoured so MCP servers started before the rename stay under policy.
 // The UI sends none: humans can do anything. Claude is held to the three workflows:
 //   Tasks:     humans release work backlog → todo; Claude claims todo → in_progress (a lock) → review.
 //   Bugs:      Claude raises into bugs; humans triage to backlog/todo. "Autofix bugs" lets Claude route them itself.
@@ -671,7 +673,7 @@ async function handle(req, res) {
   const method = req.method;
   const query = Object.fromEntries(url.searchParams);
   // Set by the MCP server on every request Claude makes; absent for the UI. See "agent policy".
-  const actor = req.headers["x-kanban-agent"] || null;
+  const actor = req.headers["x-signboard-agent"] || req.headers["x-kanban-agent"] || null;
 
   if (method === 'GET' && STATIC[url.pathname]) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });

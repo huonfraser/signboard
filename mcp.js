@@ -2,19 +2,21 @@
 // MCP server (stdio) exposing the kanban board to Claude Code.
 // Thin client over the REST API in server.js, so the board UI and Claude always share state.
 //
-// Every request carries X-Kanban-Agent, so the server applies its agent policy (see "agent policy" in
+// Every request carries X-Signboard-Agent, so the server applies its agent policy (see "agent policy" in
 // server.js): Claude claims todo → in_progress → review, raises bugs and decisions, and never touches backlog.
 // The tools below map one-to-one onto the moves that policy allows.
 //
 // Tools are scoped to a kanban project, resolved per call from, in order: an explicit `project` argument,
-// KANBAN_PROJECT (id or name), or the folder Claude Code was started in (CLAUDE_PROJECT_DIR or the process
+// SIGNBOARD_PROJECT (id or name), or the folder Claude Code was started in (CLAUDE_PROJECT_DIR or the process
 // cwd) matched against each project's linked folders.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-const BASE = process.env.KANBAN_URL || `http://localhost:${process.env.KANBAN_PORT || 4477}`;
-const AGENT = process.env.KANBAN_AGENT || 'claude';
+// SIGNBOARD_* env vars, falling back to the pre-rename KANBAN_* names so existing configs keep working.
+const env = (name) => process.env[`SIGNBOARD_${name}`] || process.env[`KANBAN_${name}`];
+const BASE = env('URL') || `http://localhost:${env('PORT') || 4477}`;
+const AGENT = env('AGENT') || 'claude';
 const WORKDIR = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const POLL_MS = 5000;
 
@@ -28,11 +30,12 @@ async function api(method, path, body) {
   try {
     res = await fetch(BASE + path, {
       method,
-      headers: { 'Content-Type': 'application/json', 'X-Kanban-Agent': AGENT },
+      // X-Kanban-Agent too, so a board server still running pre-rename code keeps applying its agent policy.
+      headers: { 'Content-Type': 'application/json', 'X-Signboard-Agent': AGENT, 'X-Kanban-Agent': AGENT },
       body: body && JSON.stringify(body),
     });
   } catch {
-    throw new Error(`Signboard server not reachable at ${BASE}. Ask the user to start it (npm start in the kanban repo).`);
+    throw new Error(`Signboard server not reachable at ${BASE}. Ask the user to start it (npm start in the Signboard repo).`);
   }
   const data = await res.json();
   if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
@@ -48,7 +51,7 @@ async function findByRef(ref) {
 
 async function currentProject(ref) {
   if (ref) return findByRef(ref);
-  if (process.env.KANBAN_PROJECT) return findByRef(process.env.KANBAN_PROJECT);
+  if (env('PROJECT')) return findByRef(env('PROJECT'));
   try {
     return await api('GET', `/api/projects/resolve?path=${encodeURIComponent(WORKDIR)}`);
   } catch (err) {
@@ -92,10 +95,10 @@ function tool(name, description, inputSchema, handler) {
 }
 
 const server = new McpServer(
-  { name: 'kanban', version: '0.4.0' },
+  { name: 'signboard', version: '0.4.0' },
   {
     instructions:
-      'Signboard, the kanban board for this project; follow the kanban skill. Work comes only from To do: claim a task (it moves to ' +
+      'Signboard, the kanban board for this project; follow the signboard skill. Work comes only from To do: claim a task (it moves to ' +
       'in_progress and is locked to you), then submit_for_review with a summary. Never touch Backlog — it is how humans ' +
       'release work. Raise any bug you find with raise_bug and any choice that belongs to the user with raise_decision ' +
       'instead of guessing. Never move anything to Done. Do not call the board\'s HTTP API directly; use these tools.',
