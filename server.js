@@ -43,6 +43,11 @@ function load() {
     t.projectId ??= data.projects[0].id;
     t.kind ??= 'task';
     delete t.tags; // tags were removed (#13); the type field and filter cover what they were used for
+    // Subtasks used to point at their parent through relatedTaskId; parentId replaced that (#3).
+    if (t.parentId === undefined) {
+      t.parentId = t.kind === 'task' && t.relatedTaskId ? t.relatedTaskId : null;
+      if (t.parentId) t.relatedTaskId = null;
+    }
   }
   return data;
 }
@@ -87,6 +92,17 @@ function validate(fields) {
     throw new HttpError(400, 'title cannot be empty');
   }
   if (fields.projectId !== undefined) findProject(fields.projectId);
+}
+
+// A parent must be another task in the same project, and not one of the task's own descendants.
+function checkParent(task, parentId, projectId) {
+  if (parentId === null) return null;
+  const parent = findTask(parentId);
+  if (parent.projectId !== projectId) throw new HttpError(400, `#${parent.id} is in another project`);
+  for (let p = parent; p; p = p.parentId ? board.tasks.find((t) => t.id === p.parentId) : null) {
+    if (task && p.id === task.id) throw new HttpError(400, `#${parent.id} can't be the parent of #${task.id}: that would make a loop`);
+  }
+  return parent;
 }
 
 function addActivity(task, author, text, kind = 'comment') {
@@ -178,7 +194,7 @@ function agentCreate(actor, input, kind, column) {
   if (column === 'review' || column === 'done') deny(`New items cannot start in ${column}.`);
   const settings = settingsOf(input.projectId);
   if (kind === 'task') {
-    const parent = input.relatedTaskId && board.tasks.find((t) => t.id === Number(input.relatedTaskId));
+    const parent = input.parentId && board.tasks.find((t) => t.id === Number(input.parentId));
     if (column !== 'todo' || !parent || parent.column !== 'in_progress' || parent.assignee !== actor) {
       deny('Claude does not release new work; humans do, via backlog → todo. You can only split a task you have in ' +
         'progress into subtasks (in todo, with its id as the parent). Put other follow-ups in your review note, ' +
@@ -206,6 +222,7 @@ function createTask(input, actor) {
   if (actor) agentCreate(actor, input, input.kind === 'bug' && column === 'decisions' ? 'bug' : kind, column);
   const author = actor || input.author;
   const related = input.relatedTaskId ? findTask(input.relatedTaskId) : null;
+  const parent = input.parentId ? checkParent(null, Number(input.parentId), projectId) : null;
   const task = {
     id: board.nextId++,
     projectId,
@@ -217,6 +234,7 @@ function createTask(input, actor) {
     assignee: input.assignee || null,
     order: nextOrder(projectId, column),
     relatedTaskId: related?.id ?? null,
+    parentId: parent?.id ?? null,
     createdAt: now(),
     updatedAt: now(),
     activity: [],
@@ -229,9 +247,13 @@ function createTask(input, actor) {
   }
   addActivity(task, author, `Created in ${column}`, 'event');
   if (related) {
-    const what = { decision: 'Waiting on decision', bug: 'Bug raised', task: 'Subtask created' }[kind];
+    const what = { decision: 'Waiting on decision', bug: 'Bug raised', task: 'Related task created' }[kind];
     addActivity(related, author, `${what} #${task.id}: ${task.title}`, 'event');
     related.updatedAt = now();
+  }
+  if (parent) {
+    addActivity(parent, author, `Subtask created #${task.id}: ${task.title}`, 'event');
+    parent.updatedAt = now();
   }
   board.tasks.push(task);
   save();
@@ -297,7 +319,7 @@ function reopenDecision(id, { reason, author }, actor) {
   return task;
 }
 
-const EDITABLE = ['title', 'description', 'column', 'priority', 'assignee', 'kind', 'order', 'projectId', 'options', 'recommendation'];
+const EDITABLE = ['title', 'description', 'column', 'priority', 'assignee', 'kind', 'parentId', 'order', 'projectId', 'options', 'recommendation'];
 
 // Keep a task's decision fields in line with its kind.
 function applyKind(task, kind) {
@@ -316,6 +338,13 @@ function updateTask(id, input, actor) {
   if (actor) input = agentUpdate(actor, task, { ...input });
   const author = actor || input.author;
   if (input.projectId !== undefined) input = { ...input, projectId: Number(input.projectId) };
+  if (input.parentId !== undefined) {
+    const parentId = input.parentId === null || input.parentId === '' ? null : Number(input.parentId);
+    checkParent(task, parentId, input.projectId ?? task.projectId);
+    input = { ...input, parentId };
+  } else if (input.projectId !== undefined && input.projectId !== task.projectId && task.parentId) {
+    input = { ...input, parentId: null }; // a parent can't be in another project
+  }
   const changes = [];
   for (const key of EDITABLE) {
     if (input[key] === undefined) continue;
@@ -331,6 +360,8 @@ function updateTask(id, input, actor) {
       changes.push(`Moved ${prev} → ${input[key]}`);
     } else if (key === 'projectId') {
       changes.push(`Moved to project ${findProject(input[key]).name}`);
+    } else if (key === 'parentId') {
+      changes.push(input[key] ? `Parent set to #${input[key]}` : 'Parent removed');
     } else if (key === 'assignee') {
       changes.push(input[key] ? `Assigned to ${input[key]}` : 'Unassigned');
     } else if (key !== 'order') {
@@ -359,6 +390,10 @@ function deleteTask(id, actor) {
     if (createdBy(task) !== actor) deny(`#${task.id} was not created by ${actor}; ask a human to delete it.`);
   }
   board.tasks = board.tasks.filter((t) => t !== task);
+  for (const child of board.tasks.filter((t) => t.parentId === task.id)) {
+    child.parentId = null;
+    addActivity(child, actor || 'user', `Parent #${task.id} was deleted`, 'event');
+  }
   save();
   return { deleted: task.id };
 }

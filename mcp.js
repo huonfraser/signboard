@@ -67,6 +67,7 @@ const line = (t, projectName) =>
   `#${t.id} [${t.column}] (${t.priority}) ${KIND_MARK[t.kind] ?? ''}${t.title}` +
   (t.kind === 'decision' && t.answer ? ` ⇒ answered: "${t.answer}"` : '') +
   (t.assignee ? ` @${t.assignee}` : '') +
+  (t.parentId ? ` ↳ parent #${t.parentId}` : '') +
   (projectName ? `  — ${projectName}` : '');
 
 const counts = (p) => Object.entries(p.counts).filter(([, n]) => n).map(([c, n]) => `${c}:${n}`).join(' ') || 'empty';
@@ -230,7 +231,7 @@ tool(
   },
   async ({ parent_id, ...fields }) => {
     const parent = await api('GET', `/api/tasks/${parent_id}`);
-    const task = await api('POST', '/api/tasks', { ...fields, column: 'todo', relatedTaskId: parent_id, projectId: parent.projectId });
+    const task = await api('POST', '/api/tasks', { ...fields, column: 'todo', parentId: parent_id, projectId: parent.projectId });
     return text(`Created subtask ${line(task)}`);
   },
 );
