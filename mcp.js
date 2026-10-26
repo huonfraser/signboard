@@ -12,6 +12,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import pkg from './package.json' with { type: 'json' };
 
 // SIGNBOARD_* env vars, falling back to the pre-rename KANBAN_* names so existing configs keep working.
 const env = (name) => process.env[`SIGNBOARD_${name}`] || process.env[`KANBAN_${name}`];
@@ -95,7 +96,7 @@ function tool(name, description, inputSchema, handler) {
 }
 
 const server = new McpServer(
-  { name: 'signboard', version: '0.4.0' },
+  { name: 'signboard', version: pkg.version },
   {
     instructions:
       'Signboard, the kanban board for this project; follow the signboard skill. Work comes only from To do: claim a task (it moves to ' +

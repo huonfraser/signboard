@@ -57,12 +57,16 @@ Order of precedence for which project a tool call uses: an explicit `project` ar
 
 ## Run it
 
+You need Node 24 or later and [Claude Code](https://claude.com/claude-code).
+
 ```bash
+git clone https://github.com/<you>/signboard.git
+cd signboard
 npm install
 npm start          # http://localhost:4477
 ```
 
-Environment variables: `SIGNBOARD_PORT` (default `4477`), `SIGNBOARD_DATA` (default `./data/board.json`). The pre-rename names `KANBAN_*` still work as a fallback for every variable here and below.
+Environment variables: `SIGNBOARD_PORT` (default `4477`), `SIGNBOARD_DATA` (default `./data/board.json`). Your board lives in `data/`, which git ignores.
 
 ## Connect Claude Code
 
@@ -76,18 +80,6 @@ The board server must be running (`npm start`); the MCP server is a thin client 
 
 - `SIGNBOARD_URL` — board address (default `http://localhost:4477`)
 - `SIGNBOARD_AGENT` — name Claude uses when claiming/commenting (default `claude`). Give parallel sessions different names, e.g. `claude mcp add ... -e SIGNBOARD_AGENT=claude-api`.
-
-### Upgrading from the `kanban` names
-
-Before the rename to Signboard, the MCP server and skill were both called `kanban`, so the tools were `mcp__kanban__*`. To switch an existing install over (new tool names only appear in new sessions):
-
-```bash
-claude mcp remove --scope user kanban
-claude mcp add --scope user signboard -- node "$(pwd)/mcp.js"
-rm ~/.claude/skills/kanban && ln -s "$(pwd)/skills/signboard" ~/.claude/skills/signboard
-```
-
-Old `KANBAN_*` env vars keep working, so there is nothing to change there unless you want the new names.
 
 ### MCP tools
 
@@ -168,4 +160,18 @@ Then in any linked project just tell Claude *"work the board"*.
 
 Boards created before projects existed are migrated on startup: all their tasks move into a "General" project.
 
-The server binds to `127.0.0.1` only and has no auth. It is meant for local use.
+## Security
+
+Signboard is for one person on one machine. The server has no login, so it protects itself in other ways:
+
+- It binds to `127.0.0.1` only, so nothing else on the network can reach it.
+- It only answers requests addressed to `localhost`, `127.0.0.1` or `[::1]`, which stops DNS-rebinding attacks.
+- It refuses requests from other web origins, and requires a JSON body on writes. A web page you visit can't change your board.
+
+Don't expose it through a tunnel or reverse proxy. Anyone who can reach it can release work to your Claude sessions.
+
+The agent guardrails (Backlog, Done, locking) stop Claude from overstepping by mistake. They are not a security boundary: anything that can run commands on your machine can call the API as a human.
+
+## License
+
+[MIT](LICENSE)
