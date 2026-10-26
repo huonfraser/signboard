@@ -33,6 +33,10 @@ The server enforces these guardrails and returns an error explaining why. Treat 
 2. `list_tasks(assignee: "claude", column: "in_progress")`. If you have something in progress, resume it before claiming anything new.
 3. `get_decisions(status: "answered")`. Any answered decision now sitting in **To do** is released work. If it unblocks a task you have in progress, `claim_task` it, apply the answer in that task, and submit both. Otherwise treat it like any To do task.
 
+## Viewing the board
+
+When the user asks to see or check the board, `list_tasks` per column (or one column they name). Add `all_projects: true` when they ask about every project. Backlog is read-only: show it, but don't act on it.
+
 ## Workflow 1: Tasks
 
 1. **Claim.** If the user named a task, `claim_task(id)`. Otherwise `claim_next_task` takes the top-priority unassigned task from To do. Claiming moves it to In progress and locks it to you.
