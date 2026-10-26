@@ -2,6 +2,9 @@
 
 A lightweight, locally hosted kanban board, MCP server and Claude skill for managing Claude Code work. (看板, *kanban*, literally means "signboard".) You plan tasks in the browser; Claude Code picks them up, comments on progress and moves them across the board through an MCP server. Changes show up in the UI live.
 
+This is a set of developer tooling based around my personal workflows. It is entirely _Vibe_ coded, and will likely evolve
+as my workflow preferences develop.
+
 ```
 Browser UI ──┐
              ├──> REST API (server.js) ──> data/board.json
