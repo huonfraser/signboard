@@ -1,6 +1,6 @@
 # Naming and positioning (#6)
 
-Research into comparable tools, what sets this board apart, and name options. Choosing the name is the user's call: it is raised as a decision on the board. Nothing in the repo has been renamed.
+Research into comparable tools, what sets this board apart, and name options. **Outcome:** the user chose **Signboard** (decision #16): "a lightweight, locally hosted kanban board, MCP server and Claude skill". The rename was applied separately under #16.
 
 Research was done on 2026-10-26 from web search results, mostly directory listings (glama.ai, mcpservers.org, Product Hunt, pkg.go.dev). Repos were not cloned or verified, so treat feature lists as approximate.
 
@@ -74,12 +74,30 @@ Weaknesses compared with the field: no worktree isolation or diff review (Vibe K
 
 ## Name options
 
+### Round 1
+
 "Kanban Vibes" collides with **Vibe Kanban**, the best-known tool in this space, so a rename is worth considering. Names checked and found taken by agent tools: *Airlock* (Code Airlock), *Tether* (tether-mcp), *Pitwall* (pitwall), *Handrail* (svyatov/handrail), *Dispatch* (Claude Code Dispatch).
 
 | Name | Rationale | Clash check |
 |---|---|---|
-| **Countersign** (recommended) | A countersignature is a second, authorising signature: Claude does the work, a human signs it in and signs it off. Names the actual differentiator. | No software or agent tool found by that name. |
+| **Countersign** (round-1 pick) | A countersignature is a second, authorising signature: Claude does the work, a human signs it in and signs it off. Names the actual differentiator. | No software or agent tool found by that name. |
 | **Gatehouse** | Humans keep the gates (release, triage, answer, close); the agent works inside them. | No agent or kanban tool found. |
 | **Keep Kanban Vibes** | No migration cost; already in package.json and the README (the MCP server itself is just `kanban`). | Very close to Vibe Kanban, which invites confusion. |
 
 Domain and npm availability were not checked.
+
+### Round 2: Kanban + MCP
+
+The user asked for names that draw on kanban and MCP.
+
+- **Literal blends are taken:** *kanban-mcp* (eyalzh, sifyfy, dzikrihilman), *KanbanMCP.com* and *KnBn MCP* already exist. *Kanban Context Protocol* is free, but it reads like a spec.
+- **Toyota Production System words** fit better. Kanban comes from that system, and so does the idea of a machine that stops and calls a human. *Andon* is taken by an MCP server.
+
+| Name | Rationale | Clash check |
+|---|---|---|
+| **Signboard** (recommended, chosen) | 看板 (kanban) literally means "signboard", and humans sign work in and sign it off. | Nothing found |
+| **Jidoka** | Toyota's "automation with a human touch": the machine stops and calls a person when something is off, as Bugs, Decisions and never-mark-it-Done do here. | Nothing found in dev or AI tools |
+| **Countersign** | Carried over from round 1. | Nothing found |
+| **Pullboard** | Kanban is a pull system, and Claude pulls released work over MCP. Less distinctive. | Not checked |
+
+Tagline: *the kanban for Claude: you release the work, Claude pulls it over MCP, you sign it off.*
