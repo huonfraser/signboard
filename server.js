@@ -79,6 +79,9 @@ function validate(fields) {
   if (fields.priority !== undefined && !PRIORITIES.includes(fields.priority)) {
     throw new HttpError(400, `priority must be one of: ${PRIORITIES.join(', ')}`);
   }
+  if (fields.kind !== undefined && !KINDS.includes(fields.kind)) {
+    throw new HttpError(400, `kind must be one of: ${KINDS.join(', ')}`);
+  }
   if (fields.title !== undefined && !String(fields.title).trim()) {
     throw new HttpError(400, 'title cannot be empty');
   }
@@ -273,7 +276,23 @@ function decideTask(id, { answer, column = 'todo', userQuote, author }, actor) {
   return task;
 }
 
-const EDITABLE = ['title', 'description', 'column', 'priority', 'assignee', 'tags', 'order', 'projectId', 'options', 'recommendation'];
+// kind comes after tags so a type change fixes up the kind tag in tags sent alongside it.
+const EDITABLE = ['title', 'description', 'column', 'priority', 'assignee', 'tags', 'kind', 'order', 'projectId', 'options', 'recommendation'];
+
+// Keep a task's kind tag and decision fields in line with its kind. An explicit type change drops the old kind
+// tag; moving into an intake column keeps it (a bug dragged into Decisions stays tagged "bug").
+function applyKind(task, kind, { dropPrevTag = true } = {}) {
+  const prev = task.kind;
+  task.kind = kind;
+  if (dropPrevTag && prev !== kind) task.tags = task.tags.filter((g) => g !== prev);
+  if (kind !== 'task' && !task.tags.includes(kind)) task.tags.push(kind);
+  if (kind === 'decision') {
+    task.options ??= [];
+    task.recommendation ??= null;
+    task.answer ??= null;
+    task.answeredAt ??= null;
+  }
+}
 
 function updateTask(id, input, actor) {
   const task = findTask(id);
@@ -286,6 +305,11 @@ function updateTask(id, input, actor) {
     if (input[key] === undefined) continue;
     const prev = task[key];
     if (JSON.stringify(prev) === JSON.stringify(input[key])) continue;
+    if (key === 'kind') {
+      applyKind(task, input[key]);
+      changes.push(`Changed type ${prev} → ${input[key]}`);
+      continue;
+    }
     task[key] = input[key];
     if (key === 'column') {
       changes.push(`Moved ${prev} → ${input[key]}`);
@@ -299,16 +323,7 @@ function updateTask(id, input, actor) {
   }
   // Dropping a card into an intake column makes it that kind (e.g. a task dragged into Bugs becomes a bug).
   const intakeKind = KIND_FOR_COLUMN[task.column];
-  if (intakeKind && task.kind !== intakeKind) {
-    task.kind = intakeKind;
-    if (!task.tags.includes(intakeKind)) task.tags.push(intakeKind);
-    if (intakeKind === 'decision') {
-      task.options ??= [];
-      task.recommendation ??= null;
-      task.answer ??= null;
-      task.answeredAt ??= null;
-    }
-  }
+  if (intakeKind && task.kind !== intakeKind) applyKind(task, intakeKind, { dropPrevTag: false });
   // A column or project change lands the task at the end of its new list unless an order was given.
   const relocated = changes.some((c) => c.startsWith('Moved'));
   if (relocated && input.order === undefined) task.order = nextOrder(task.projectId, task.column);

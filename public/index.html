@@ -139,6 +139,12 @@
     <option value="updated">Sort: Last updated</option>
     <option value="manual">Sort: Manual</option>
   </select>
+  <select id="kind-filter" aria-label="Filter by type">
+    <option value="">All types</option>
+    <option value="task">Tasks</option>
+    <option value="bug">Bugs</option>
+    <option value="decision">Decisions</option>
+  </select>
   <select id="tag-filter" aria-label="Filter by tag"><option value="">All tags</option></select>
   <input id="filter" placeholder="Filter tasks…" />
 </header>
@@ -157,6 +163,7 @@
     <div class="row">
       <label>Project<select name="projectId"></select></label>
       <label>Column<select name="column"></select></label>
+      <label>Type<select name="kind"><option value="task">Task</option><option value="bug">Bug</option><option value="decision">Decision</option></select></label>
       <label>Priority<select name="priority"></select></label>
       <label>Assignee<input name="assignee" placeholder="unassigned" /></label>
       <label>Tags<input name="tags" placeholder="comma,separated" /></label>
@@ -309,11 +316,13 @@ function render() {
 
   const q = $('#filter').value.toLowerCase();
   const tag = $('#tag-filter').value;
+  const kind = $('#kind-filter').value;
   const board = $('#board');
   board.innerHTML = '';
   for (const col of state.columns) {
     const tasks = state.tasks
       .filter((t) => t.column === col)
+      .filter((t) => !kind || t.kind === kind)
       .filter((t) => !tag || t.tags.includes(tag))
       .filter((t) => !q || `${t.title} ${t.description} ${t.assignee ?? ''} ${t.tags.join(' ')}`.toLowerCase().includes(q))
       .sort(SORTS[$('#sort').value] ?? SORTS.manual);
@@ -452,6 +461,7 @@ function openTask(id) {
   f.projectId.value = t.projectId;
   f.column.value = t.column;
   f.priority.value = t.priority;
+  f.kind.value = t.kind;
   f.assignee.value = t.assignee ?? '';
   f.tags.value = t.tags.join(', ');
   f.description.value = t.description;
@@ -539,6 +549,7 @@ $('#form').addEventListener('submit', async (e) => {
     projectId: Number(f.projectId.value),
     column: f.column.value,
     priority: f.priority.value,
+    kind: f.kind.value,
     assignee: f.assignee.value.trim() || null,
     tags: f.tags.value.split(',').map((s) => s.trim()).filter(Boolean),
     description: f.description.value,
@@ -663,6 +674,7 @@ $('#project-delete').addEventListener('click', async () => {
 
 $('#filter').addEventListener('input', render);
 $('#tag-filter').addEventListener('change', render);
+$('#kind-filter').addEventListener('change', render);
 try { const s = localStorage.getItem('kanban-sort'); if (s && SORTS[s]) $('#sort').value = s; } catch {}
 $('#sort').addEventListener('change', () => {
   try { localStorage.setItem('kanban-sort', $('#sort').value); } catch {}
