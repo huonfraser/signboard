@@ -50,6 +50,8 @@
   .badge { display: none; white-space: nowrap; padding: 4px 10px; border-radius: 12px; border: none; font-size: 12px; font-weight: 600; cursor: pointer;
     background: color-mix(in srgb, var(--high) 22%, transparent); color: color-mix(in srgb, var(--high) 70%, var(--text)); }
   .badge.show { display: inline-block; }
+  /* Author display rules (e.g. .decision-panel's grid) beat the UA's [hidden] style, so restore it for everything. */
+  [hidden] { display: none !important; }
   .decision-panel { display: grid; gap: 8px; padding: 12px; border-radius: 8px; background: color-mix(in srgb, var(--high) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--high) 35%, transparent); }
   .decision-panel h4 { margin: 0; font-size: 12px; text-transform: uppercase; color: var(--muted); }
   .decision-panel .rec { font-size: 13px; white-space: pre-wrap; }
