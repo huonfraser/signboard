@@ -32,7 +32,7 @@ Claude needs a human call ──raise_decision─▶ Decisions ──human answe
 - **New work:** Claude can't add work of its own. It can only split a task it has in progress into subtasks. Other ideas go in the review summary.
 
 **2. Bugs.**
-- **Raising:** when Claude finds a bug, it raises it in 🐞 Bugs, tagged `bug` plus any area tags. Use the tag filter in the header to see them.
+- **Raising:** when Claude finds a bug, it raises it in 🐞 Bugs. Every card has a type (task, bug or decision), and the type filter in the header shows just the bugs.
 - **Triage:** you move bugs to Backlog or To do. Claude doesn't fix out-of-scope bugs on its own.
 - **⚡ Autofix bugs** (project setting): Claude routes bugs itself, to To do, to In progress to fix them now, or to Decisions when how to fix it is your call.
 
@@ -82,15 +82,15 @@ The board server must be running (`npm start`); the MCP server is a thin client 
 | --- | --- |
 | `current_project` | Which project this session is in, its workflow settings and task counts |
 | `list_projects` / `link_project` | See projects; link the current folder to one (or create it) |
-| `list_tasks` / `get_task` | Read the board: filter by column, kind, tag, assignee, text |
+| `list_tasks` / `get_task` | Read the board: filter by column, kind, assignee, text |
 | `claim_next_task` / `claim_task` | Take the top To do task, or a specific one; moves it to In progress, locked |
 | `wait_for_task` | Poll To do until work is released, then claim it |
 | `submit_for_review` | In progress → Review, with a required summary |
 | `release_task` | In progress → To do, unlocked, with a reason |
 | `create_subtask` | Split a task you have in progress (the only way Claude adds work) |
-| `update_task` | Edit title, description, priority or tags of your claimed task, or of a bug or decision you raised |
+| `update_task` | Edit title, description or priority of your claimed task, or of a bug or decision you raised |
 | `add_comment` | Progress notes and findings (not on Backlog) |
-| `raise_bug` | Bug with repro, expected/actual, location, severity, tags → Bugs (or routed, with autofix) |
+| `raise_bug` | Bug with repro, expected/actual, location, severity → Bugs (or routed, with autofix) |
 | `triage_bug` | Autofix only: Bugs → To do / In progress |
 | `raise_decision` | Question, context, options, recommendation, blocking task → Decisions |
 | `record_decision` | Decisions from chat only: record your chat answer, quoting you |
@@ -143,14 +143,14 @@ Then in any linked project just tell Claude *"work the board"*.
 | POST | `/api/projects/:id/paths` | `{path}`: link one more folder |
 | GET | `/api/projects/resolve` | `?path=`: project linked to a folder (or 404) |
 | GET | `/api/claude-projects` | folders Claude Code has been used in, newest first |
-| GET | `/api/tasks` | `?project=&column=&kind=&assignee=&tag=&q=` (`kind`: task, bug, decision) |
-| POST | `/api/tasks` | `{title, projectId, description?, column?, priority?, assignee?, tags?, relatedTaskId?, author?}`; decisions also take `options?, recommendation?` |
+| GET | `/api/tasks` | `?project=&column=&kind=&assignee=&q=` (`kind`: task, bug, decision) |
+| POST | `/api/tasks` | `{title, projectId, description?, column?, priority?, assignee?, relatedTaskId?, author?}`; decisions also take `options?, recommendation?` |
 | GET | `/api/tasks/:id` | |
 | PATCH | `/api/tasks/:id` | any editable field, plus `note?` (added as a comment) and `author?` |
 | DELETE | `/api/tasks/:id` | |
 | POST | `/api/tasks/:id/comments` | `{text, author?}` |
 | POST | `/api/tasks/:id/decide` | `{answer, column?}`: answer a decision and route it (humans: `todo` / `backlog`); notifies the blocked task. Agents also send `userQuote` |
-| POST | `/api/claim` | `{assignee, projectId, column?, tag?}` or `{assignee, taskId}` → `{task}` or `{task: null}` |
+| POST | `/api/claim` | `{assignee, projectId, column?}` or `{assignee, taskId}` → `{task}` or `{task: null}` |
 
 Boards created before projects existed are migrated on startup: all their tasks move into a "General" project.
 

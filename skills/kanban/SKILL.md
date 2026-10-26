@@ -66,7 +66,6 @@ Raise a bug **whenever you find a defect**: in code you're changing or reading, 
 2. **Raise:** `raise_bug` with:
    - `summary`, `steps_to_reproduce`, `expected`, `actual`, and `location` (file:line), where known.
    - `severity`: be honest; urgent means data loss, a security issue, or a broken main path.
-   - `tags` for area (e.g. `auth`, `ui`). Bugs are always tagged `bug` automatically.
    - `found_while_task_id`: your current task.
 3. **Then:**
    - **Autofix bugs off (the default):** the bug stays in Bugs until a human moves it to Backlog or To do. Carry on with your task; don't fix the bug. The exception is a bug that is part of your task or blocks it: raise it, fix it as part of the task, and mention both in your summary.

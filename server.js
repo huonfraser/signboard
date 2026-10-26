@@ -42,6 +42,7 @@ function load() {
   for (const t of data.tasks) {
     t.projectId ??= data.projects[0].id;
     t.kind ??= 'task';
+    delete t.tags; // tags were removed (#13); the type field and filter cover what they were used for
   }
   return data;
 }
@@ -151,7 +152,7 @@ function checkAgentMove(actor, task, to, note) {
     'in_progress → review (with a note), in_progress → todo (release, with a note).');
 }
 
-const AGENT_EDITABLE = ['title', 'description', 'priority', 'tags', 'options', 'recommendation'];
+const AGENT_EDITABLE = ['title', 'description', 'priority', 'options', 'recommendation'];
 
 // Validate and adjust an update coming from Claude. Assignment follows the move: claiming locks, releasing unlocks.
 function agentUpdate(actor, task, input) {
@@ -202,12 +203,9 @@ function createTask(input, actor) {
   // Kind comes from the intake column, or is given explicitly (e.g. an autofixed bug created straight in todo).
   let kind = KIND_FOR_COLUMN[column] || input.kind || 'task';
   if (!KINDS.includes(kind)) throw new HttpError(400, `kind must be one of: ${KINDS.join(', ')}`);
-  const extraTags = [];
-  if (input.kind === 'bug' && column === 'decisions') extraTags.push('bug'); // a bug that needs a human call
   if (actor) agentCreate(actor, input, input.kind === 'bug' && column === 'decisions' ? 'bug' : kind, column);
   const author = actor || input.author;
   const related = input.relatedTaskId ? findTask(input.relatedTaskId) : null;
-  const tags = [...new Set([...(kind === 'task' ? [] : [kind]), ...extraTags, ...(Array.isArray(input.tags) ? input.tags : [])])];
   const task = {
     id: board.nextId++,
     projectId,
@@ -217,7 +215,6 @@ function createTask(input, actor) {
     column,
     priority: input.priority || 'medium',
     assignee: input.assignee || null,
-    tags,
     order: nextOrder(projectId, column),
     relatedTaskId: related?.id ?? null,
     createdAt: now(),
@@ -276,16 +273,11 @@ function decideTask(id, { answer, column = 'todo', userQuote, author }, actor) {
   return task;
 }
 
-// kind comes after tags so a type change fixes up the kind tag in tags sent alongside it.
-const EDITABLE = ['title', 'description', 'column', 'priority', 'assignee', 'tags', 'kind', 'order', 'projectId', 'options', 'recommendation'];
+const EDITABLE = ['title', 'description', 'column', 'priority', 'assignee', 'kind', 'order', 'projectId', 'options', 'recommendation'];
 
-// Keep a task's kind tag and decision fields in line with its kind. An explicit type change drops the old kind
-// tag; moving into an intake column keeps it (a bug dragged into Decisions stays tagged "bug").
-function applyKind(task, kind, { dropPrevTag = true } = {}) {
-  const prev = task.kind;
+// Keep a task's decision fields in line with its kind.
+function applyKind(task, kind) {
   task.kind = kind;
-  if (dropPrevTag && prev !== kind) task.tags = task.tags.filter((g) => g !== prev);
-  if (kind !== 'task' && !task.tags.includes(kind)) task.tags.push(kind);
   if (kind === 'decision') {
     task.options ??= [];
     task.recommendation ??= null;
@@ -323,7 +315,7 @@ function updateTask(id, input, actor) {
   }
   // Dropping a card into an intake column makes it that kind (e.g. a task dragged into Bugs becomes a bug).
   const intakeKind = KIND_FOR_COLUMN[task.column];
-  if (intakeKind && task.kind !== intakeKind) applyKind(task, intakeKind, { dropPrevTag: false });
+  if (intakeKind && task.kind !== intakeKind) applyKind(task, intakeKind);
   // A column or project change lands the task at the end of its new list unless an order was given.
   const relocated = changes.some((c) => c.startsWith('Moved'));
   if (relocated && input.order === undefined) task.order = nextOrder(task.projectId, task.column);
@@ -381,7 +373,7 @@ function linkCommit(id, { sha, message, author }, actor) {
 
 // Atomically take a task and start it: a specific one (taskId) or the highest-priority, oldest unassigned
 // one in a project's column. Claude may claim from todo, or from bugs when "Autofix bugs" is on.
-function claimNext({ assignee, projectId, column = 'todo', tag, taskId }, actor) {
+function claimNext({ assignee, projectId, column = 'todo', taskId }, actor) {
   assignee = actor || assignee;
   if (!assignee) throw new HttpError(400, 'assignee is required');
   let task;
@@ -401,7 +393,7 @@ function claimNext({ assignee, projectId, column = 'todo', tag, taskId }, actor)
   }
   if (!task) {
     [task] = board.tasks
-      .filter((t) => t.projectId === pid && t.column === column && !t.assignee && (!tag || t.tags.includes(tag)))
+      .filter((t) => t.projectId === pid && t.column === column && !t.assignee)
       .sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.order - b.order);
     if (!task) return null;
   }
@@ -414,7 +406,6 @@ function listTasks(query) {
   if (query.column) tasks = tasks.filter((t) => t.column === query.column);
   if (query.kind) tasks = tasks.filter((t) => t.kind === query.kind);
   if (query.assignee) tasks = tasks.filter((t) => t.assignee === query.assignee);
-  if (query.tag) tasks = tasks.filter((t) => t.tags.includes(query.tag));
   if (query.q) {
     const q = query.q.toLowerCase();
     tasks = tasks.filter((t) => `${t.title} ${t.description}`.toLowerCase().includes(q));

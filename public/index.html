@@ -147,7 +147,6 @@
     <option value="bug">Bugs</option>
     <option value="decision">Decisions</option>
   </select>
-  <select id="tag-filter" aria-label="Filter by tag"><option value="">All tags</option></select>
   <input id="filter" placeholder="Filter tasks…" />
 </header>
 <main class="board" id="board"></main>
@@ -168,7 +167,6 @@
       <label>Type<select name="kind"><option value="task">Task</option><option value="bug">Bug</option><option value="decision">Decision</option></select></label>
       <label>Priority<select name="priority"></select></label>
       <label>Assignee<input name="assignee" placeholder="unassigned" /></label>
-      <label>Tags<input name="tags" placeholder="comma,separated" /></label>
     </div>
     <div class="related" id="related" hidden></div>
     <div class="field"><label>Description<textarea name="description" placeholder="Details, acceptance criteria, context for Claude…"></textarea></label></div>
@@ -307,7 +305,6 @@ function render() {
     ? [s.autofixBugs && '<span class="mode" title="Claude routes bugs itself">⚡ Autofix bugs</span>',
        s.chatDecisions && '<span class="mode" title="Claude records decisions you make in chat">💬 Chat decisions</span>'].filter(Boolean).join(' ')
     : '';
-  renderTagFilter();
   document.title = `${all ? 'All projects' : project?.name ?? ''} · Kanban Vibes`;
   renderMenu();
   // Answered decisions leave the decisions column, so whatever is in it is waiting on the user.
@@ -317,7 +314,6 @@ function render() {
   badge.classList.toggle('show', waiting > 0);
 
   const q = $('#filter').value.toLowerCase();
-  const tag = $('#tag-filter').value;
   const kind = $('#kind-filter').value;
   const board = $('#board');
   board.innerHTML = '';
@@ -325,8 +321,7 @@ function render() {
     const tasks = state.tasks
       .filter((t) => t.column === col)
       .filter((t) => !kind || t.kind === kind)
-      .filter((t) => !tag || t.tags.includes(tag))
-      .filter((t) => !q || `${t.title} ${t.description} ${t.assignee ?? ''} ${t.tags.join(' ')}`.toLowerCase().includes(q))
+      .filter((t) => !q || `${t.title} ${t.description} ${t.assignee ?? ''}`.toLowerCase().includes(q))
       .sort(SORTS[$('#sort').value] ?? SORTS.manual);
     const el = document.createElement('section');
     el.className = 'column';
@@ -345,16 +340,6 @@ function render() {
     wireDrop(el);
     board.appendChild(el);
   }
-}
-
-function renderTagFilter() {
-  const sel = $('#tag-filter');
-  const current = sel.value;
-  const tags = [...new Set(state.tasks.flatMap((t) => t.tags))].sort((a, b) =>
-    (a === 'bug' ? -2 : a === 'decision' ? -1 : 0) - (b === 'bug' ? -2 : b === 'decision' ? -1 : 0) || a.localeCompare(b));
-  if (current && !tags.includes(current)) tags.unshift(current);
-  sel.innerHTML = '<option value="">All tags</option>' + tags.map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('');
-  sel.value = current;
 }
 
 function renderMenu() {
@@ -392,7 +377,6 @@ function cardEl(t, showProject) {
       ${t.kind === 'decision' ? (t.answer ? '<span class="pill decided">✓ decided</span>' : '<span class="pill decision">needs decision</span>') : ''}
       ${t.priority !== 'medium' ? `<span class="pill">${t.priority}</span>` : ''}
       ${t.assignee ? `<span class="pill ${isAgent ? 'agent' : ''}" title="${t.column === 'in_progress' ? 'Locked: claimed by ' + esc(t.assignee) : ''}">${t.column === 'in_progress' ? '🔒 ' : ''}${esc(t.assignee)}</span>` : ''}
-      ${t.tags.filter((g) => g !== t.kind).map((g) => `<span class="pill">${esc(g)}</span>`).join('')}
       ${t.commits?.length ? `<span title="Linked commits">⎇ ${t.commits.length}</span>` : ''}
       ${t.activity.some((a) => a.kind === 'comment') ? `<span>💬 ${t.activity.filter((a) => a.kind === 'comment').length}</span>` : ''}
       <span style="margin-left:auto">${ago(t.updatedAt)}</span>
@@ -465,7 +449,6 @@ function openTask(id) {
   f.priority.value = t.priority;
   f.kind.value = t.kind;
   f.assignee.value = t.assignee ?? '';
-  f.tags.value = t.tags.join(', ');
   f.description.value = t.description;
   f.comment.value = '';
   renderRelated(t);
@@ -553,7 +536,6 @@ $('#form').addEventListener('submit', async (e) => {
     priority: f.priority.value,
     kind: f.kind.value,
     assignee: f.assignee.value.trim() || null,
-    tags: f.tags.value.split(',').map((s) => s.trim()).filter(Boolean),
     description: f.description.value,
   });
   if (f.comment.value.trim()) await api('POST', `/api/tasks/${id}/comments`, { text: f.comment.value.trim() });
@@ -675,7 +657,6 @@ $('#project-delete').addEventListener('click', async () => {
 });
 
 $('#filter').addEventListener('input', render);
-$('#tag-filter').addEventListener('change', render);
 $('#kind-filter').addEventListener('change', render);
 try { const s = localStorage.getItem('kanban-sort'); if (s && SORTS[s]) $('#sort').value = s; } catch {}
 $('#sort').addEventListener('change', () => {

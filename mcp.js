@@ -67,7 +67,6 @@ const line = (t, projectName) =>
   `#${t.id} [${t.column}] (${t.priority}) ${KIND_MARK[t.kind] ?? ''}${t.title}` +
   (t.kind === 'decision' && t.answer ? ` ⇒ answered: "${t.answer}"` : '') +
   (t.assignee ? ` @${t.assignee}` : '') +
-  (t.tags.length ? ` {${t.tags.join(',')}}` : '') +
   (projectName ? `  — ${projectName}` : '');
 
 const counts = (p) => Object.entries(p.counts).filter(([, n]) => n).map(([c, n]) => `${c}:${n}`).join(' ') || 'empty';
@@ -144,12 +143,11 @@ tool(
     column: Column.optional(),
     kind: z.enum(['task', 'bug', 'decision']).optional(),
     assignee: z.string().optional(),
-    tag: z.string().optional(),
     query: z.string().optional().describe('Text search over title and description'),
   },
-  async ({ project, all_projects, column, kind, assignee, tag, query }) => {
+  async ({ project, all_projects, column, kind, assignee, query }) => {
     const pid = all_projects ? undefined : (await currentProject(project)).id;
-    const params = new URLSearchParams(Object.entries({ project: pid, column, kind, assignee, tag, q: query }).filter(([, v]) => v));
+    const params = new URLSearchParams(Object.entries({ project: pid, column, kind, assignee, q: query }).filter(([, v]) => v));
     const tasks = await api('GET', `/api/tasks?${params}`);
     if (!tasks.length) return text('No matching tasks.');
     const names = all_projects ? Object.fromEntries((await api('GET', '/api/projects')).map((p) => [p.id, p.name])) : {};
@@ -167,10 +165,10 @@ tool(
   'claim_next_task',
   'Claim the highest-priority unassigned task in To do: moves it to in_progress and locks it to you. ' +
     'Returns the full task, or a message if To do is empty. (With "Autofix bugs" on you may pass column "bugs".)',
-  { tag: z.string().optional().describe('Only claim tasks with this tag'), column: z.enum(['todo', 'bugs']).optional(), project: ProjectRef },
-  async ({ tag, column, project }) => {
+  { column: z.enum(['todo', 'bugs']).optional(), project: ProjectRef },
+  async ({ column, project }) => {
     const p = await currentProject(project);
-    const { task } = await api('POST', '/api/claim', { projectId: p.id, column, tag });
+    const { task } = await api('POST', '/api/claim', { projectId: p.id, column });
     return task ? json(task) : text(`To do is empty in "${p.name}".`);
   },
 );
@@ -188,14 +186,13 @@ tool(
     'working the board. Returns the claimed task, or a message if nothing arrived before the timeout (call again to keep waiting).',
   {
     timeout_seconds: z.number().int().min(10).max(1800).optional().describe('How long to wait (default 300)'),
-    tag: z.string().optional(),
     project: ProjectRef,
   },
-  async ({ timeout_seconds = 300, tag, project }) => {
+  async ({ timeout_seconds = 300, project }) => {
     const p = await currentProject(project);
     const deadline = Date.now() + timeout_seconds * 1000;
     for (;;) {
-      const { task } = await api('POST', '/api/claim', { projectId: p.id, tag });
+      const { task } = await api('POST', '/api/claim', { projectId: p.id });
       if (task) return json(task);
       if (Date.now() + POLL_MS > deadline) break;
       await sleep(POLL_MS);
@@ -230,7 +227,6 @@ tool(
     title: z.string(),
     description: z.string().optional(),
     priority: Priority.optional(),
-    tags: z.array(z.string()).optional(),
   },
   async ({ parent_id, ...fields }) => {
     const parent = await api('GET', `/api/tasks/${parent_id}`);
@@ -241,14 +237,13 @@ tool(
 
 tool(
   'update_task',
-  'Edit the title, description, priority or tags of a task you have in progress, or of a bug/decision you raised. ' +
+  'Edit the title, description or priority of a task you have in progress, or of a bug/decision you raised. ' +
     'Column changes go through claim/submit/release; assignment follows claiming.',
   {
     id: z.number().int(),
     title: z.string().optional(),
     description: z.string().optional(),
     priority: Priority.optional(),
-    tags: z.array(z.string()).optional(),
   },
   async ({ id, ...fields }) => text(`Updated ${line(await api('PATCH', `/api/tasks/${id}`, fields))}`),
 );
@@ -279,7 +274,7 @@ tool(
 
 tool(
   'raise_bug',
-  'Record a bug you found, tagged "bug". By default it goes to Bugs for a human to triage. Use this for every defect you ' +
+  'Record a bug you found. By default it goes to Bugs for a human to triage. Use this for every defect you ' +
     'notice, including ones outside your current task. Check list_tasks(kind: "bug") first to avoid duplicates. ' +
     'With "Autofix bugs" on you may route it yourself: todo, in_progress (fix it now; it is claimed by you) or decisions ' +
     '(a human must choose how to fix it; give options).',
@@ -291,14 +286,13 @@ tool(
     actual: z.string().optional(),
     location: z.string().optional().describe('Files / functions / lines involved, e.g. src/auth.ts:42'),
     severity: Priority.optional().describe('low | medium | high | urgent (defaults to medium)'),
-    tags: z.array(z.string()).optional().describe('Extra tags for filtering, e.g. area ("auth", "ui")'),
     found_while_task_id: z.number().int().optional().describe('The task you were working on when you found it'),
     column: z.enum(['bugs', 'todo', 'in_progress', 'decisions']).optional().describe('Defaults to bugs. Others need "Autofix bugs".'),
     options: z.array(z.string()).optional().describe('Only for column "decisions": the fix options for the human'),
     recommendation: z.string().optional().describe('Only for column "decisions"'),
     project: ProjectRef,
   },
-  async ({ title, summary, steps_to_reproduce, expected, actual, location, severity, tags, found_while_task_id, column = 'bugs', options, recommendation, project }) => {
+  async ({ title, summary, steps_to_reproduce, expected, actual, location, severity, found_while_task_id, column = 'bugs', options, recommendation, project }) => {
     const p = await currentProject(project);
     const sections = [
       summary,
@@ -314,7 +308,6 @@ tool(
       kind: 'bug',
       column,
       priority: severity,
-      tags,
       options,
       recommendation,
       relatedTaskId: found_while_task_id,
@@ -346,10 +339,9 @@ tool(
     recommendation: z.string().optional().describe('Which option you recommend and why (quote the option text)'),
     blocking_task_id: z.number().int().optional().describe('Task that cannot proceed until this is decided'),
     priority: Priority.optional().describe('How urgently you need an answer (defaults to medium)'),
-    tags: z.array(z.string()).optional(),
     project: ProjectRef,
   },
-  async ({ question, context, options, recommendation, blocking_task_id, priority, tags, project }) => {
+  async ({ question, context, options, recommendation, blocking_task_id, priority, project }) => {
     const p = await currentProject(project);
     const task = await api('POST', '/api/tasks', {
       title: question,
@@ -358,7 +350,6 @@ tool(
       options,
       recommendation,
       priority,
-      tags,
       relatedTaskId: blocking_task_id,
       projectId: p.id,
     });
